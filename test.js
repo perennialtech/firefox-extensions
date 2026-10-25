@@ -3,18 +3,37 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const { test } = require('node:test');
 
-function fixture(onLookup = () => ({ status: 200, country: 'United States' })) {
-  const events = new Map(), storage = {}, calls = [];
-  let badge = null;
-  const link = {
-    getAttribute: () => '/Alice',
-    querySelector: () => badge,
-    get textContent() { return '@Alice' + (badge?.textContent || ''); },
-    append(element) { badge = element; element.remove = () => { badge = null; }; }
-  };
+function fixture(onLookup = () => ({ status: 200, country: 'United States' }), options = {}) {
+  const events = new Map(), domEvents = new Map(), storage = {}, calls = [];
+  const names = options.names || ['Alice'];
+  const links = names.map(name => {
+    let badge = null;
+    const link = {
+      getAttribute: () => '/' + name,
+      querySelector: () => badge,
+      get textContent() { return '@' + name + (badge?.textContent || ''); },
+      getBoundingClientRect: () => options.offscreen?.includes(name)
+        ? { top: 2000, bottom: 2020, left: 0, right: 80 }
+        : { top: 40, bottom: 60, left: 0, right: 80 },
+      append(element) { badge = element; element.remove = () => { badge = null; }; },
+      get badge() { return badge; }
+    };
+    return link;
+  });
+  const containers = links.map(link => ({
+    matches: () => true, querySelectorAll: () => [link]
+  }));
   const document = {
-    cookie: 'auth_token=unused; ct0=csrf-from-cookie', documentElement: {},
-    querySelectorAll: () => [{ querySelectorAll: () => [link] }],
+    cookie: 'auth_token=unused; ct0=csrf-from-cookie',
+    documentElement: { clientHeight: 1000, clientWidth: 1000 },
+    querySelectorAll: () => containers,
+    addEventListener(type, fn) {
+      if (!domEvents.has(type)) domEvents.set(type, []);
+      domEvents.get(type).push(fn);
+    },
+    emit(type, event) {
+      for (const fn of domEvents.get(type) || []) fn(event);
+    },
     createElement: () => ({ dataset: {}, style: {}, textContent: '', setAttribute() {} })
   };
   const fetch = async (url, options) => {
@@ -48,7 +67,10 @@ function fixture(onLookup = () => ({ status: 200, country: 'United States' })) {
     MutationObserver: class { observe() {} }
   };
   const window = {
-    fetch,
+    fetch, innerHeight: 1000, innerWidth: 1000,
+    emit(type, event = {}) {
+      for (const fn of events.get(type) || []) fn(event);
+    },
     addEventListener(type, fn) {
       if (!events.has(type)) events.set(type, []);
       events.get(type).push(fn);
@@ -71,7 +93,13 @@ function fixture(onLookup = () => ({ status: 200, country: 'United States' })) {
       await new Promise(resolve => setTimeout(resolve, 20));
     }
   }
-  return { ctx, window, storage, calls, until, get badge() { return badge; } };
+  return {
+    ctx, document, window, storage, calls, until, containers, links,
+    hover(index) {
+      document.emit('pointerover', { target: { closest: () => containers[index] } });
+    },
+    get badge() { return links[0].badge; }
+  };
 }
 
 test('captures authorization without a CSRF header and displays a flag', async () => {
@@ -133,4 +161,28 @@ test('caches a legitimately empty location for less than a day', async () => {
   assert.equal(f.badge, null);
   const age = f.storage.locations.alice.expires - Date.now();
   assert.ok(age > 5 * 3600000 && age < 7 * 3600000);
+});
+
+test('offscreen accounts do not consume foreground lookup slots', async () => {
+  const f = fixture(undefined, { names: ['Alice', 'Bob'], offscreen: ['Alice'] });
+  await f.window.fetch('/i/api/graphql/anything/HomeTimeline', {
+    headers: { authorization: 'Bearer from-x' }
+  });
+  await f.until(() => f.storage.locations?.bob?.country === 'United States');
+  assert.equal(f.calls.filter(c => c.url.includes('AboutAccountQuery')).length, 1);
+  assert.equal(f.calls.find(c => c.url.includes('AboutAccountQuery'))
+    .url.includes('screenName%22%3A%22bob%22'), true);
+});
+
+test('hovered author jumps ahead of the background queue without a 3s wait', async () => {
+  const f = fixture(undefined, { names: ['Alice', 'Bob', 'Carol'] });
+  await f.window.fetch('/i/api/graphql/anything/HomeTimeline', {
+    headers: { authorization: 'Bearer from-x' }
+  });
+  await f.until(() => f.calls.filter(c => c.url.includes('AboutAccountQuery')).length === 1);
+  f.hover(2);
+  await f.until(() => f.calls.filter(c => c.url.includes('AboutAccountQuery')).length >= 2);
+  const calls = f.calls.filter(c => c.url.includes('AboutAccountQuery'));
+  assert.match(decodeURIComponent(calls[1].url), /"screenName":"carol"/);
+  assert.equal(f.storage.locations?.bob, undefined);
 });
