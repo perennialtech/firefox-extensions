@@ -132,12 +132,20 @@ function contentFixture(options = {}) {
   // a handle-wrapper div, then the · separator, then a date div. The handle
   // <a> owns a text div, but must NOT own our location badge.
   for (const [index, name] of handles.entries()) {
-    const slot = { children: [], parentElement: null };
+    const slot = {
+      children: [], parentElement: null,
+      get nextSibling() {
+        const children = this.parentElement?.children || [];
+        return children[children.indexOf(this) + 1] || null;
+      }
+    };
     const dot = { textContent: '·', parentElement: null };
     const date = { textContent: 'Mar 22, 2024', parentElement: null };
     const row = {
       children: [slot, dot, date],
+      insertions: 0,
       insertBefore(child, before) {
+        this.insertions++;
         if (child.parentElement) child.remove();
         const position = before ? this.children.indexOf(before) : -1;
         this.children.splice(position < 0 ? this.children.length : position, 0, child);
@@ -170,7 +178,12 @@ function contentFixture(options = {}) {
     documentElement: { clientHeight: 800, clientWidth: 900 },
     querySelectorAll: () => containers,
     createElement: () => ({
-      dataset: {}, style: {}, textContent: '', parentElement: null, setAttribute() {}
+      dataset: {}, style: {}, textContent: '', parentElement: null,
+      setAttribute() {},
+      get previousElementSibling() {
+        const children = this.parentElement?.children || [];
+        return children[children.indexOf(this) - 1] || null;
+      }
     }),
     addEventListener(name, fn) { listeners.set(name, fn); }
   };
@@ -239,4 +252,5 @@ test('subsequent scans reuse the badge instead of adding duplicates', async () =
   await new Promise(resolve => setTimeout(resolve, 120));
   assert.equal(f.rows[0].children.filter(node => node.dataset?.xAccountFlag).length, 1);
   assert.equal(f.rows[0].children[1], badge);
+  assert.equal(f.rows[0].insertions, 1, 'repeat scans must not move existing badges');
 });
