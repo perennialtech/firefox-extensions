@@ -70,8 +70,21 @@
         if (link.textContent.trim().startsWith('@') || !link.textContent.trim()) continue;
         if (seen.has(link)) continue;
         seen.add(link);
-        found.push({ link, username: match[1].toLowerCase() });
+        found.push({ link, username: match[1].toLowerCase(), placement: 'header' });
         break;
+      }
+      // UserCell biographies can contain @mentions with their own locations.
+      // Keep those as inline annotations, but never mistake them for the
+      // card's account identity or move them into the display-name row.
+      if (container.getAttribute?.('data-testid') === 'UserCell') {
+        for (const link of container.querySelectorAll('div[dir="auto"] a[href]')) {
+          const path = link.getAttribute('href') || '';
+          const match = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(path);
+          if (!match || link.textContent.trim().toLowerCase() !== '@' + match[1].toLowerCase()) continue;
+          if (seen.has(link)) continue;
+          seen.add(link);
+          found.push({ link, username: match[1].toLowerCase(), placement: 'mention' });
+        }
       }
     }
     return found;
@@ -84,10 +97,11 @@
     return rect.bottom > 0 && rect.top < height && rect.right > 0 && rect.left < width;
   }
 
-  function paint(link, entry, loading = false) {
-    // Insert before the DISPLAY NAME, not inside X's handle link. Both tweet
-    // headers and UserCell cards put that link in a dedicated wrapper.
-    const row = link.parentElement;
+  function paint(link, entry, loading = false, placement = 'header') {
+    // Header locations precede display names. Bio mention badges instead sit
+    // after their @mention wrapper in the existing inline biography flow.
+    const anchor = placement === 'mention' ? link.parentElement : link;
+    const row = anchor?.parentElement;
     if (!row) return;
     const username = link.getAttribute('href')?.replace(/^\//, '').toLowerCase();
     const existing = [...row.children].filter(child => child.dataset?.xAccountFlag === 'true');
@@ -103,7 +117,8 @@
       badge.style.flex = '0 0 ' + LOCATION_WIDTH;
       badge.style.minWidth = LOCATION_WIDTH;
       badge.style.maxWidth = LOCATION_WIDTH;
-      badge.style.marginInlineEnd = '0.35rem';
+      badge.style.marginInlineEnd = placement === 'header' ? '0.35rem' : '0';
+      badge.style.marginInlineStart = placement === 'mention' ? '0.35rem' : '0';
       badge.style.whiteSpace = 'nowrap';
       badge.style.overflow = 'hidden';
       badge.style.textOverflow = 'ellipsis';
@@ -112,22 +127,17 @@
       badge.style.lineHeight = '1.25rem';
       badge.style.height = '1.25rem';
     }
-    // X's inner wrapper is often a flex column, even when its outer name row
-    // is horizontal. Force its two children into one row without moving the
-    // native anchor into a new wrapper (React owns the original DOM).
-    row.style.flexDirection = 'row';
-    row.style.alignItems = 'center';
-    if (badge.parentElement !== row || badge.nextElementSibling !== link) {
-      row.insertBefore(badge, link);
+    if (placement === 'header') {
+      // X's inner display-name wrapper defaults to a flex column.
+      // Preserve React's anchor but lay its siblings out horizontally.
+      row.style.flexDirection = 'row';
+      row.style.alignItems = 'center';
     }
-
-    // Older builds inserted badges after @handles and within UserCell bios.
-    // Remove those orphaned elements, never decorate unrelated bio mentions.
-    const card = link.closest?.('[data-testid="UserCell"]');
-    if (card) {
-      for (const old of card.querySelectorAll('[data-x-account-flag]')) {
-        if (old !== badge) old.remove();
-      }
+    const next = placement === 'header' ? anchor : anchor.nextSibling;
+    if (badge.parentElement !== row ||
+        (placement === 'header' ? badge.nextElementSibling !== anchor :
+          badge.previousElementSibling !== anchor)) {
+      row.insertBefore(badge, next);
     }
 
     const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
@@ -167,7 +177,7 @@
     const valid = current?.expires > Date.now() ? current : null;
     const loading = !valid && Date.now() >= retryAt;
     for (const item of findHandles()) {
-      if (item.username === username) paint(item.link, valid, loading);
+      if (item.username === username) paint(item.link, valid, loading, item.placement);
     }
   }
 
@@ -230,12 +240,12 @@
 
   function scan() {
     const visibleNames = new Set();
-    for (const { link, username } of findHandles()) {
+    for (const { link, username, placement } of findHandles()) {
       const current = entries.get(username);
       // Create the fixed-width loading slot before any network lookup starts.
       // A completed empty result keeps the slot but clears the skeleton.
       const valid = current?.expires > Date.now() ? current : null;
-      paint(link, valid, !valid && Date.now() >= retryAt);
+      paint(link, valid, !valid && Date.now() >= retryAt, placement);
       if (visible(link)) {
         visibleNames.add(username);
         if (!current || current.expires <= Date.now()) enqueue(username);
