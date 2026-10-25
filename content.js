@@ -7,7 +7,7 @@
   const MAX_QUEUE = 150;
   // Reserve one consistent footprint for flags, region names and empty results.
   // Without it, the timestamp moves horizontally after every API response.
-  const LOCATION_WIDTH = '5.5em';
+  const LOCATION_WIDTH = '5.5rem';
   const entries = new Map();
   const queued = new Set();
   const urgent = new Set();
@@ -89,14 +89,14 @@
       badge.style.flex = '0 0 ' + LOCATION_WIDTH;
       badge.style.minWidth = LOCATION_WIDTH;
       badge.style.maxWidth = LOCATION_WIDTH;
-      badge.style.marginInlineStart = '0.35em';
+      badge.style.marginInlineStart = '0.35rem';
       badge.style.whiteSpace = 'nowrap';
       badge.style.overflow = 'hidden';
       badge.style.textOverflow = 'ellipsis';
       badge.style.alignSelf = 'center';
       badge.style.verticalAlign = 'middle';
-      badge.style.lineHeight = '1.25';
-      badge.style.height = '1.25em';
+      badge.style.lineHeight = '1.25rem';
+      badge.style.height = '1.25rem';
     }
     if (badge.parentElement !== row || badge.previousElementSibling !== handleSlot) {
       row.insertBefore(badge, handleSlot.nextSibling);
@@ -116,7 +116,7 @@
     badge.style.backgroundImage = pending
       ? 'linear-gradient(rgba(113, 118, 123, 0.25), rgba(113, 118, 123, 0.25))'
       : 'none';
-    badge.style.backgroundSize = '3.25em 0.55em';
+    badge.style.backgroundSize = '3.25rem 0.55rem';
     badge.style.backgroundPosition = 'left center';
     badge.style.backgroundRepeat = 'no-repeat';
     if (pending) {
