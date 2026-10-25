@@ -1,32 +1,47 @@
 # X Account Location Flags for Firefox
 
-A small, dependency-free Firefox extension that shows a country flag beside X/Twitter account handles in timelines, replies, and profile-related views. Based on [RhysSullivan/twitter-account-location-in-username](https://github.com/RhysSullivan/twitter-account-location-in-username), rewritten for Firefox rather than porting the Chrome extension wholesale.
+A small Firefox extension that adds country flags beside X account handles in
+timelines, replies and user lists. Flags reflect X's **Account based in**
+metadata, retrieved from [FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/).
+They do not prove a person's real-world location.
 
-It uses the **account based in** value returned by X's `AboutAccountQuery`, not a user's freely editable profile location. This is account-level metadata, not a precise or independently verified geographic location.
+## Install temporarily
 
-## Install (temporary)
+1. Open `about:debugging#/runtime/this-firefox` in Firefox 128 or newer.
+2. Choose **Load Temporary Add-on** and select `manifest.json`.
+3. Open https://x.com/ and refresh the page.
 
-1. In Firefox 128 or newer, open `about:debugging#/runtime/this-firefox`.
-2. Choose **Load Temporary Add-on** and select `manifest.json` from this folder.
-3. Log in to https://x.com/ and refresh the page.
+For permanent installation in standard Firefox, package and sign the extension.
 
-Temporary add-ons are removed when Firefox restarts. Permanent installation requires a Firefox-signed add-on package (including for personal distribution in standard Firefox).
+## Design
 
-## How it works
+- **`content.js`** identifies handles and displays flags. It only looks up accounts
+  presently visible on the page, giving pointer/keyboard focus priority. Cached
+  flags are rendered immediately. It makes no HTTP requests itself.
+- **`background.js`** requests
+  `GET https://api.fxtwitter.com/2/profile/{handle}/about` using the Firefox
+  host permission. It does not call X, intercept X requests, read X cookies,
+  or access X credentials. The background script validates handles and
+  deduplicates overlapping lookups across tabs.
+- All metadata is stored in Firefox's local extension storage only. Known
+  locations expire after 14 days; successful responses with no location after
+  12 hours. Network errors aren't persisted. FxTwitter 429 responses pause
+  outgoing requests, respecting `Retry-After` where provided.
+- Calls are limited to four concurrent requests, started at least 200 ms apart.
+  The extension neither requires an X login nor sends credentials to FxTwitter.
 
-- `page.js` runs in Firefox's `MAIN` content-script world before X starts. It observes the authorization headers on X's *own* GraphQL requests, then makes authenticated same-origin `AboutAccountQuery` requests. Headers stay in that page context.
-- `content.js` runs in Firefox's isolated content-script world. It detects `@handles` in X's username components, queues lookups (one every two seconds), and displays the returned flags.
-- Successful results are cached locally for seven days. Only country metadata is stored, not authentication headers.
-- No backend, build tools, third-party dependencies, or additional host permissions.
+## Privacy and limitations
 
-## Limitations
+Looking up an account sends its public handle to FxTwitter, alongside normal
+HTTP request metadata such as your network IP. No other account information,
+X cookies, or X authorization headers are transmitted. FxTwitter is an
+independent service, and its availability and accuracy depend on both FxTwitter
+and X. No flags appear for countries not exposed by the API or for geographic
+regions lacking a country flag.
 
-- Requires a logged-in session and an X GraphQL request from which the extension can observe the necessary authentication headers.
-- X can change its private endpoint, response schema, authentication, or page markup without notice.
-- Some accounts don't expose an `account based in` value; those accounts won't get a flag.
-- Requests may be rate-limited. A 429 response pauses requests until the API's reset time (or 15 minutes if absent).
-- Firefox's MAIN execution world is available from Firefox 128 onward.
+## Test
 
-## Testing
+`node --check background.js && node --check content.js && node --test test.js`
 
-Run `node --check page.js && node --check content.js && node test.js` for syntax and a mocked end-to-end check. Load the unpacked extension in Firefox and check a logged-in X timeline to exercise the real API and DOM integration.
+These tests exercise the background and content scripts against a mocked
+FxTwitter API and DOM. They do not substitute for manually testing in Firefox.

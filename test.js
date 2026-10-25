@@ -1,67 +1,175 @@
-// Dependency-free smoke test for the MAIN/ISOLATED message flow.
+// No dependencies, real extension scripts executed in isolated VM worlds.
+const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-const events = new Map();
-const storage = {};
-const calls = [];
-let badge = null;
-const link = {
-  getAttribute: () => '/Alice',
-  querySelector: () => badge,
-  get textContent() { return '@Alice' + (badge?.textContent || ''); },
-  append(element) { badge = element; element.remove = () => { badge = null; }; }
-};
-const context = {
-  location: { origin: 'https://x.com', href: 'https://x.com/home' },
-  Headers, Request, URL, Intl, setTimeout, clearTimeout,
-  browser: { storage: { local: {
-    get: async (key) => ({ [key]: storage[key] }),
-    set: async (value) => Object.assign(storage, value)
-  } } },
-  document: {
-    documentElement: {},
-    querySelectorAll: () => [{ querySelectorAll: () => [link] }],
-    createElement: () => ({ dataset: {}, style: {}, textContent: '' })
-  },
-  MutationObserver: class { observe() {} }
-};
-context.window = {
-  fetch: async (url, options) => {
-    calls.push({ url: String(url), options });
-    return {
-      ok: true, status: 200,
-      json: async () => ({ data: { user_result_by_screen_name: {
-        result: { about_profile: { account_based_in: 'United States' } }
-      } } })
-    };
-  },
-  addEventListener: (name, fn) => {
-    if (!events.has(name)) events.set(name, []);
-    events.get(name).push(fn);
-  },
-  postMessage: (data, origin) => {
-    for (const fn of events.get('message') || []) {
-      fn({ source: context.window, origin, data });
-    }
-  }
-};
-
-const sandbox = vm.createContext(context);
-for (const name of ['page.js', 'content.js']) {
-  vm.runInContext(fs.readFileSync(`${__dirname}/${name}`, 'utf8'), sandbox, { filename: name });
+function load(name, context) {
+  vm.runInNewContext(fs.readFileSync(__dirname + '/' + name, 'utf8'), context, {
+    filename: name
+  });
 }
 
-(async () => {
-  await context.window.fetch('https://x.com/i/api/graphql/some-other-query', {
-    headers: { authorization: 'Bearer private', 'x-csrf-token': 'private' }
+function response(status = 200, data = { code: 200, about_account: { based_in: 'Japan', location_accurate: true } }, headers = {}) {
+  return { ok: status >= 200 && status < 300, status,
+    headers: new Headers(headers), json: async () => data };
+}
+
+function backgroundFixture(fetchImpl = async () => response(), storage = {}) {
+  const calls = [], handlers = [];
+  const browser = {
+    storage: { local: {
+      async get(keys) {
+        return Object.fromEntries((Array.isArray(keys) ? keys : [keys])
+          .map(key => [key, storage[key]]));
+      },
+      async set(value) { Object.assign(storage, value); }
+    } },
+    runtime: { onMessage: { addListener(fn) { handlers.push(fn); } } }
+  };
+  load('background.js', {
+    browser, Headers, AbortController, Date, setTimeout, clearTimeout,
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      return fetchImpl(url, options);
+    }
   });
-  await new Promise(resolve => setTimeout(resolve, 500));
-  assert.equal(badge?.textContent, '🇺🇸');
-  assert.equal(calls.length, 2, 'one X fetch and one account lookup');
-  assert.equal(JSON.parse(new URL(calls[1].url).searchParams.get('variables')).screenName, 'alice');
-  assert.equal(storage.locations.alice.country, 'United States');
-  assert.ok(!JSON.stringify(storage).includes('private'), 'no auth secrets persisted');
-  console.log('PASS: authenticated lookup, flag rendering, and safe cache');
-})().catch(error => { console.error(error); process.exitCode = 1; });
+  async function send(username, priority = false) {
+    return handlers[0]({ type: 'lookup', username, priority });
+  }
+  return { browser, storage, calls, send };
+}
+
+async function waitFor(predicate, ms = 2000) {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > ms) throw new Error('Timed out waiting for condition');
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+}
+
+test('FxTwitter about endpoint, no cookies, country and accuracy returned', async () => {
+  const f = backgroundFixture();
+  assert.equal(JSON.stringify(await f.send('alice')), JSON.stringify({
+    success: true, country: 'Japan', accurate: true
+  }));
+  assert.equal(f.calls[0].url, 'https://api.fxtwitter.com/2/profile/alice/about');
+  assert.equal(f.calls[0].options.credentials, 'omit');
+  assert.equal(f.calls[0].options.referrerPolicy, 'no-referrer');
+  assert.equal(f.calls[0].options.method, 'GET');
+  assert.equal(f.calls[0].options.headers, undefined);
+  await waitFor(() => !!f.storage['fxtwitter-locations-v1']?.alice);
+  assert.equal(f.storage['fxtwitter-locations-v1'].alice.country, 'Japan');
+});
+
+test('case-insensitive handle cache avoids repeat requests', async () => {
+  const f = backgroundFixture();
+  assert.equal((await f.send('ALICE')).country, 'Japan');
+  assert.equal((await f.send('Alice')).country, 'Japan');
+  assert.equal(f.calls.length, 1);
+});
+
+test('coalesces concurrent lookups across tabs', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const f = backgroundFixture(async () => { await gate; return response(); });
+  const first = f.send('bob');
+  const second = f.send('bob');
+  await waitFor(() => f.calls.length === 1);
+  release();
+  const values = await Promise.all([first, second]);
+  assert.equal(values[0].country, 'Japan');
+  assert.equal(values[1].country, 'Japan');
+  assert.equal(f.calls.length, 1);
+});
+
+test('invalid handles are rejected before any request', async () => {
+  const f = backgroundFixture();
+  for (const handle of ['', '../secret', 'name/status/1', 'x'.repeat(16)]) {
+    assert.equal(await f.send(handle), undefined);
+  }
+  assert.equal(f.calls.length, 0);
+});
+
+test('missing about metadata caches a valid empty answer', async () => {
+  const f = backgroundFixture(async () => response(200, { code: 200, message: 'OK' }));
+  const result = await f.send('alice');
+  assert.equal(result.success, true);
+  assert.equal(result.country, null);
+  await f.send('alice');
+  assert.equal(f.calls.length, 1);
+});
+
+test('HTTP 200 with API error is not cached as an empty account', async () => {
+  const f = backgroundFixture(async () => response(200, { code: 500, message: 'Upstream error' }));
+  assert.equal((await f.send('alice')).success, false);
+  assert.equal((await f.send('alice')).success, false);
+  assert.equal(f.calls.length, 2);
+});
+
+test('HTTP 429 pauses the service and persists cooldown across background restarts', async () => {
+  const f = backgroundFixture(async () => response(429, { code: 429 }, { 'retry-after': '40' }));
+  const value = await f.send('alice');
+  assert.equal(value.success, false);
+  assert.ok(value.retryAt - Date.now() > 39000);
+  const next = await f.send('bob');
+  assert.equal(next.retryAt, value.retryAt);
+  assert.equal(f.calls.length, 1);
+  const again = backgroundFixture(async () => response(), f.storage);
+  const afterRestart = await again.send('carol');
+  assert.equal(afterRestart.retryAt, value.retryAt);
+  assert.equal(again.calls.length, 0);
+});
+
+function contentFixture() {
+  const calls = [], listeners = new Map();
+  const handles = ['Alice', 'Bob', 'Carol'];
+  const badges = new Map();
+  const links = handles.map((name, index) => ({
+    name,
+    getAttribute() { return '/' + name; },
+    querySelector() { return badges.get(name) || null; },
+    get textContent() { return '@' + name + (badges.get(name)?.textContent || ''); },
+    getBoundingClientRect() {
+      return { top: index === 2 ? 1400 : 50, bottom: index === 2 ? 1420 : 70,
+        left: 0, right: 90 };
+    },
+    append(node) { badges.set(name, node); node.remove = () => badges.delete(name); }
+  }));
+  const containers = links.map(link => ({
+    matches: () => true,
+    querySelectorAll: () => [link]
+  }));
+  const doc = {
+    documentElement: { clientHeight: 800, clientWidth: 900 },
+    querySelectorAll: () => containers,
+    createElement: () => ({ dataset: {}, style: {}, textContent: '', setAttribute() {} }),
+    addEventListener(name, fn) { listeners.set(name, fn); }
+  };
+  const win = { innerHeight: 800, innerWidth: 900,
+    addEventListener(name, fn) { listeners.set(name, fn); } };
+  const browser = {
+    runtime: {
+      async sendMessage(message) {
+        calls.push(message);
+        return { success: true, country: message.username === 'bob' ? 'United States' : 'Japan', accurate: true };
+      }
+    }
+  };
+  load('content.js', {
+    browser, window: win, document: doc,
+    Intl, Date, setTimeout, clearTimeout, URL,
+    location: { href: 'https://x.com/home', origin: 'https://x.com' },
+    MutationObserver: class { observe() {} }
+  });
+  return { calls, links, containers, badges, listeners };
+}
+
+test('content script only requests visible X handles and displays returned flags', async () => {
+  const f = contentFixture();
+  await waitFor(() => f.badges.get('Alice')?.textContent === '🇯🇵' &&
+    f.badges.get('Bob')?.textContent === '🇺🇸');
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.badges.has('Carol'), false);
+  assert.ok(f.calls.every(call => call.type === 'lookup'));
+});
