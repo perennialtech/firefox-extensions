@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "X Account Location Flags",
+  "version": "0.2.0",
+  "description": "Show X Account based in flags using FxTwitter public metadata.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "x-account-location-flags@perennialtech",
+      "strict_min_version": "128.0"
+    }
+  },
+  "permissions": ["storage"],
+  "host_permissions": ["https://api.fxtwitter.com/*"],
+  "background": { "scripts": ["background.js"] },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
