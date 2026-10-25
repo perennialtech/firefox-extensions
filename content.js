@@ -5,6 +5,9 @@
   const USER_SELECTOR = '[data-testid="User-Name"], [data-testid="UserName"], [data-testid="UserCell"]';
   const MAX_IN_FLIGHT = 4;
   const MAX_QUEUE = 150;
+  // Reserve one consistent footprint for flags, region names and empty results.
+  // Without it, the timestamp moves horizontally after every API response.
+  const LOCATION_WIDTH = '5.5em';
   const entries = new Map();
   const queued = new Set();
   const urgent = new Set();
@@ -66,55 +69,77 @@
     return rect.bottom > 0 && rect.top < height && rect.right > 0 && rect.left < width;
   }
 
-  function paint(link, entry) {
-    // X's handle <a> contains a flex column. Appending a badge *inside* it
-    // creates an unwanted second line. Instead put it beside the handle's
-    // wrapper, as a sibling of X's dot separator and timestamp.
-    const slot = link.parentElement;
-    const row = slot?.parentElement;
+  function paint(link, entry, loading = false) {
+    // The handle link is a nested flex layout; inserting inside it wraps the
+    // badge. Use a fixed-size sibling slot in the native horizontal metadata row.
+    const handleSlot = link.parentElement;
+    const row = handleSlot?.parentElement;
     if (!row) return;
-    const existing = [...row.children].filter(child => child.dataset?.xAccountFlag === 'true');
-    const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
-    const flag = flagFor(location);
-    const display = flag || location;
-    if (!display) {
-      for (const badge of existing) badge.remove();
-      return;
-    }
-    // React may recycle a row for a different account. Reuse only the badge
-    // associated with the current handle, not with the former occupant.
     const username = link.getAttribute('href')?.replace(/^\//, '').toLowerCase();
+    const existing = [...row.children].filter(child => child.dataset?.xAccountFlag === 'true');
     let badge = existing.find(child => child.dataset.xAccountHandle === username);
+    // React can recycle a username row for another author.
     for (const old of existing) if (old !== badge) old.remove();
     if (!badge) {
       badge = document.createElement('span');
       badge.dataset.xAccountFlag = 'true';
       badge.dataset.xAccountHandle = username;
+      badge.style.display = 'inline-block';
+      badge.style.width = LOCATION_WIDTH;
+      badge.style.flex = '0 0 ' + LOCATION_WIDTH;
+      badge.style.minWidth = LOCATION_WIDTH;
+      badge.style.maxWidth = LOCATION_WIDTH;
+      badge.style.marginInlineStart = '0.35em';
+      badge.style.whiteSpace = 'nowrap';
+      badge.style.overflow = 'hidden';
+      badge.style.textOverflow = 'ellipsis';
+      badge.style.alignSelf = 'center';
+      badge.style.verticalAlign = 'middle';
+      badge.style.lineHeight = '1.25';
+      badge.style.height = '1.25em';
     }
-    // Keep the badge in the native horizontal flex row, immediately after the
-    // handle slot and before the separator/date, even after X reorders nodes.
-    if (badge.parentElement !== row || badge.previousElementSibling !== slot) {
-      row.insertBefore(badge, slot.nextSibling);
+    if (badge.parentElement !== row || badge.previousElementSibling !== handleSlot) {
+      row.insertBefore(badge, handleSlot.nextSibling);
     }
+
+    const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
+    const flag = flagFor(location);
+    const display = flag || location;
     if (badge.textContent !== display) badge.textContent = display;
-    const label = 'Account based in ' + location + ' (according to X)' +
-      (entry.accurate === false ? '; X marks this location as uncertain' : '');
-    badge.title = label;
-    badge.setAttribute('aria-label', label);
-    badge.style.display = 'inline-flex';
-    badge.style.alignItems = 'center';
-    badge.style.alignSelf = 'center';
-    badge.style.marginInlineStart = '0.35em';
-    badge.style.flexShrink = flag ? '0' : '1';
-    badge.style.minWidth = '0';
-    badge.style.whiteSpace = 'nowrap';
-    badge.style.lineHeight = '1';
-    badge.style.verticalAlign = 'middle';
     badge.style.fontSize = flag ? '1em' : '0.85em';
     badge.style.color = flag ? 'inherit' : 'rgb(113, 118, 123)';
-    badge.style.maxWidth = flag ? '' : '11em';
-    badge.style.overflow = flag ? '' : 'hidden';
-    badge.style.textOverflow = flag ? '' : 'ellipsis';
+
+    // An unintrusive skeleton occupies the same width as the final location.
+    // Once a lookup settles, keep the empty slot reserved even if X exposes
+    // no location or the API failed, so the timestamp never jumps.
+    const pending = loading && !display;
+    badge.style.backgroundImage = pending
+      ? 'linear-gradient(rgba(113, 118, 123, 0.25), rgba(113, 118, 123, 0.25))'
+      : 'none';
+    badge.style.backgroundSize = '3.25em 0.55em';
+    badge.style.backgroundPosition = 'left center';
+    badge.style.backgroundRepeat = 'no-repeat';
+    if (pending) {
+      badge.title = 'Loading account location';
+      badge.setAttribute('aria-label', 'Loading account location');
+    } else if (display) {
+      const label = 'Account based in ' + location + ' (according to X)' +
+        (entry.accurate === false ? '; X marks this location as uncertain' : '');
+      badge.title = label;
+      badge.setAttribute('aria-label', label);
+    } else {
+      badge.removeAttribute('title');
+      badge.removeAttribute('aria-label');
+    }
+  }
+
+  function paintUsername(username) {
+    const current = entries.get(username);
+    const valid = current?.expires > Date.now() ? current : null;
+    const loading = !valid && Date.now() >= retryAt;
+    for (const item of findHandles()) {
+      if (item.username === username) paint(item.link, valid, loading);
+    }
   }
 
   function enqueue(username, priority = false) {
@@ -157,10 +182,7 @@
           if (result?.success) {
             entries.set(username, { country: result.country, accurate: result.accurate,
               expires: Date.now() + 30 * 60 * 1000 });
-            // Includes DOM nodes which were recycled while the lookup ran.
-            for (const item of findHandles()) {
-              if (item.username === username) paint(item.link, entries.get(username));
-            }
+            // The fixed slot is already present; only its contents change.
           } else if (result?.retryAt > Date.now()) {
             delayRetry(result.retryAt);
           } else {
@@ -171,6 +193,7 @@
           entries.set(username, { country: null, expires: Date.now() + 30000 });
         }).finally(() => {
           inFlight.delete(username);
+          paintUsername(username);
           pump();
         });
     }
@@ -180,8 +203,10 @@
     const visibleNames = new Set();
     for (const { link, username } of findHandles()) {
       const current = entries.get(username);
-      // Clear badges on recycled X rows as well as updating cached locations.
-      paint(link, current?.expires > Date.now() ? current : null);
+      // Create the fixed-width loading slot before any network lookup starts.
+      // A completed empty result keeps the slot but clears the skeleton.
+      const valid = current?.expires > Date.now() ? current : null;
+      paint(link, valid, !valid && Date.now() >= retryAt);
       if (visible(link)) {
         visibleNames.add(username);
         if (!current || current.expires <= Date.now()) enqueue(username);

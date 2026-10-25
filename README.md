@@ -3,7 +3,8 @@
 A small Firefox extension that displays X's **Account based in** metadata
 beside handles in timelines, replies and user lists. Countries appear as flags;
 larger geographic regions (for example, East Asia) appear as muted text on
-the same line as the handle and timestamp. Data comes from
+the same line as the handle and timestamp. A subtle fixed-width placeholder
+reserves space before FxTwitter responds, preventing timestamp shifts. Data comes from
 [FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/).
 It does not prove a person's real-world location.
 

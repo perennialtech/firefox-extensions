@@ -179,7 +179,7 @@ function contentFixture(options = {}) {
     querySelectorAll: () => containers,
     createElement: () => ({
       dataset: {}, style: {}, textContent: '', parentElement: null,
-      setAttribute() {},
+      setAttribute() {}, removeAttribute() {},
       get previousElementSibling() {
         const children = this.parentElement?.children || [];
         return children[children.indexOf(this) - 1] || null;
@@ -193,6 +193,7 @@ function contentFixture(options = {}) {
     runtime: {
       async sendMessage(message) {
         calls.push(message);
+        if (options.lookup) return options.lookup(message);
         const country = Object.hasOwn(regions, message.username)
           ? regions[message.username]
           : message.username === 'bob' ? 'United States' : 'Japan';
@@ -228,9 +229,10 @@ test('flags are siblings of the handle wrapper and remain in X’s horizontal ro
   assert.equal(row.children[2].textContent, '·');
   assert.equal(badge.parentElement, row);
   assert.equal(f.links[0].textContent, '@Alice');
-  assert.equal(badge.style.display, 'inline-flex');
+  assert.equal(badge.style.display, 'inline-block');
   assert.equal(badge.style.whiteSpace, 'nowrap');
-  assert.equal(badge.style.flexShrink, '0');
+  assert.equal(badge.style.width, '5.5em');
+  assert.equal(badge.style.flex, '0 0 5.5em');
 });
 
 test('non-country locations render as readable, non-wrapping region text', async () => {
@@ -239,7 +241,7 @@ test('non-country locations render as readable, non-wrapping region text', async
     f.badges.get('Bob')?.textContent === 'Europe');
   const badge = f.badges.get('Alice');
   assert.equal(badge.title, 'Account based in East Asia (according to X)');
-  assert.equal(badge.style.flexShrink, '1');
+  assert.equal(badge.style.width, '5.5em');
   assert.equal(badge.style.textOverflow, 'ellipsis');
   assert.equal(f.rows[0].children[1], badge);
 });
@@ -253,4 +255,68 @@ test('subsequent scans reuse the badge instead of adding duplicates', async () =
   assert.equal(f.rows[0].children.filter(node => node.dataset?.xAccountFlag).length, 1);
   assert.equal(f.rows[0].children[1], badge);
   assert.equal(f.rows[0].insertions, 1, 'repeat scans must not move existing badges');
+});
+
+
+test('placeholder reserves the final width while a lookup is still pending', async () => {
+  let finish;
+  const waiting = new Promise(resolve => { finish = resolve; });
+  const f = contentFixture({ lookup: () => waiting });
+  const row = f.rows[0];
+  const slot = row.children[1];
+  assert.equal(row.children[0], f.links[0].parentElement);
+  assert.equal(slot.textContent, '');
+  assert.equal(slot.style.width, '5.5em');
+  assert.equal(slot.style.backgroundSize, '3.25em 0.55em');
+  assert.match(slot.style.backgroundImage, /linear-gradient/);
+  assert.equal(row.children[2].textContent, '·');
+  finish({ success: true, country: 'United States', accurate: true });
+  await waitFor(() => slot.textContent === '🇺🇸');
+  assert.equal(row.children[1], slot, 'must reuse the placeholder element');
+  assert.equal(slot.style.width, '5.5em', 'same width before and after loading');
+  assert.equal(slot.style.backgroundImage, 'none');
+  assert.equal(row.insertions, 1);
+});
+
+test('region replaces a placeholder without shifting timestamp or resizing', async () => {
+  let finish;
+  const waiting = new Promise(resolve => { finish = resolve; });
+  const f = contentFixture({ lookup: () => waiting });
+  const row = f.rows[0], slot = row.children[1];
+  finish({ success: true, country: 'East Asia', accurate: false });
+  await waitFor(() => slot.textContent === 'East Asia');
+  assert.equal(row.children[1], slot);
+  assert.equal(row.children[2].textContent, '·');
+  assert.equal(slot.style.width, '5.5em');
+  assert.match(slot.title, /X marks this location as uncertain/);
+});
+
+test('empty or failed lookups clear the placeholder but retain its width', async () => {
+  for (const outcome of [
+    { success: true, country: null, accurate: null },
+    { success: false },
+    { success: false, retryAt: Date.now() + 60000 }
+  ]) {
+    let finish;
+    const f = contentFixture({ lookup: () => new Promise(resolve => { finish = resolve; }) });
+    const row = f.rows[0], slot = row.children[1];
+    finish(outcome);
+    await waitFor(() => slot.style.backgroundImage === 'none');
+    assert.equal(slot.textContent, '');
+    assert.equal(slot.style.width, '5.5em');
+    assert.equal(row.children[1], slot);
+    assert.equal(row.children[2].textContent, '·');
+  }
+});
+
+test('cached rows retain the fixed-width slot through subsequent scans', async () => {
+  const f = contentFixture({ regions: { alice: 'East Asia' } });
+  await waitFor(() => f.badges.get('Alice')?.textContent === 'East Asia');
+  const slot = f.rows[0].children[1];
+  f.listeners.get('scroll')();
+  await new Promise(resolve => setTimeout(resolve, 120));
+  assert.equal(f.rows[0].children[1], slot);
+  assert.equal(slot.style.backgroundImage, 'none');
+  assert.equal(slot.style.width, '5.5em');
+  assert.equal(f.rows[0].insertions, 1);
 });
