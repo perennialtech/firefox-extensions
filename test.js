@@ -296,7 +296,7 @@ test('empty or failed lookups clear the placeholder but retain its width', async
   for (const outcome of [
     { success: true, country: null, accurate: null },
     { success: false },
-    { success: false, retryAt: Date.now() + 60000 }
+    { success: false, retryAt: Date.now() + 300 }
   ]) {
     let finish;
     const pending = new Promise(resolve => { finish = resolve; });
