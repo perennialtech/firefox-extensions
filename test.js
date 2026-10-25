@@ -121,204 +121,258 @@ test('HTTP 429 pauses the service and persists cooldown across background restar
   assert.equal(again.calls.length, 0);
 });
 
+
+// Layout fixture mirrors the two supplied X structures: a tweet's User-Name
+// block and a UserCell with avatar, display name, @handle, Follow and bio links.
 function contentFixture(options = {}) {
   const calls = [], listeners = new Map(), badges = new Map();
-  const handles = options.handles || ['Alice', 'Bob', 'Carol'];
-  const regions = options.regions || {};
-  const links = [];
-  const containers = [];
-  const rows = [];
-  // Minimal DOM representation of the supplied X HTML: a flex row containing
-  // a handle-wrapper div, then the · separator, then a date div. The handle
-  // <a> owns a text div, but must NOT own our location badge.
-  for (const [index, name] of handles.entries()) {
-    const slot = {
-      children: [], parentElement: null,
-      get nextSibling() {
+  const accounts = options.accounts || [
+    { handle: 'Alice', name: 'Alice', type: 'User-Name' },
+    { handle: 'Bob', name: 'Bob', type: 'User-Name' },
+    { handle: 'Carol', name: 'Carol', type: 'User-Name', offscreen: true }
+  ];
+  const locations = options.locations || {};
+  const rows = [], links = [], containers = [], handleLinks = [];
+  const orphanBadges = [];
+
+  function element(attrs = {}) {
+    return {
+      ...attrs,
+      dataset: attrs.dataset || {}, style: attrs.style || {},
+      parentElement: null,
+      get nextElementSibling() {
         const children = this.parentElement?.children || [];
         return children[children.indexOf(this) + 1] || null;
-      }
-    };
-    const dot = { textContent: '·', parentElement: null };
-    const date = { textContent: 'Mar 22, 2024', parentElement: null };
-    const row = {
-      children: [slot, dot, date],
-      insertions: 0,
-      insertBefore(child, before) {
-        this.insertions++;
-        if (child.parentElement) child.remove();
-        const position = before ? this.children.indexOf(before) : -1;
-        this.children.splice(position < 0 ? this.children.length : position, 0, child);
-        child.parentElement = this;
-        child.remove = () => {
-          const at = this.children.indexOf(child);
-          if (at !== -1) this.children.splice(at, 1);
-          child.parentElement = null;
-        };
-        badges.set(name, child);
-      }
-    };
-    for (const child of row.children) child.parentElement = row;
-    const link = {
-      name, parentElement: slot,
-      getAttribute() { return '/' + name; },
-      querySelector: () => null,
-      get textContent() { return '@' + name; },
-      getBoundingClientRect() {
-        return { top: index === 2 ? 1400 : 50, bottom: index === 2 ? 1420 : 70,
-          left: 0, right: 90 };
-      }
-    };
-    const container = { matches: () => true, querySelectorAll: () => [link] };
-    links.push(link);
-    containers.push(container);
-    rows.push(row);
-  }
-  const doc = {
-    documentElement: { clientHeight: 800, clientWidth: 900 },
-    querySelectorAll: () => containers,
-    createElement: () => ({
-      dataset: {}, style: {}, textContent: '', parentElement: null,
-      setAttribute() {}, removeAttribute() {},
+      },
       get previousElementSibling() {
         const children = this.parentElement?.children || [];
         return children[children.indexOf(this) - 1] || null;
+      },
+      remove() {
+        const children = this.parentElement?.children || [];
+        const index = children.indexOf(this);
+        if (index >= 0) children.splice(index, 1);
+        this.parentElement = null;
+      },
+      getAttribute(key) { return this.attrs?.[key] ?? null; },
+      setAttribute(key, value) { (this.attrs ||= {})[key] = value; },
+      removeAttribute(key) { if (this.attrs) delete this.attrs[key]; }
+    };
+  }
+  const bounds = acct => acct.offscreen
+    ? { top: 1500, bottom: 1520, left: 0, right: 80 }
+    : { top: 40, bottom: 60, left: 0, right: 80 };
+
+  for (const acct of accounts) {
+    const display = element({
+      attrs: { href: '/' + acct.handle, role: 'link' },
+      textContent: acct.name,
+      getBoundingClientRect: () => bounds(acct)
+    });
+    const handle = element({
+      attrs: { href: '/' + acct.handle, role: 'link', tabindex: '-1' },
+      textContent: '@' + acct.handle
+    });
+    const avatar = element({
+      attrs: { href: '/' + acct.handle, role: 'link', tabindex: '-1' },
+      textContent: ''
+    });
+    const row = {
+      style: {},
+      children: [display],
+      insertions: 0,
+      insertBefore(child, anchor) {
+        this.insertions++;
+        if (child.parentElement) child.remove();
+        const at = anchor ? this.children.indexOf(anchor) : this.children.length;
+        this.children.splice(at < 0 ? this.children.length : at, 0, child);
+        child.parentElement = this;
+        badges.set(acct.handle, child);
       }
-    }),
+    };
+    display.parentElement = row;
+    const bioLinks = (acct.bio || []).map(name => element({
+      attrs: { href: '/' + name, role: 'link' },
+      textContent: '@' + name
+    }));
+    const oldBadges = [];
+    if (acct.legacyBioBadge) {
+      const old = element({
+        dataset: { xAccountFlag: 'true', xAccountHandle: 'ka_xa_' },
+        textContent: 'East Asia'
+      });
+      old.parentElement = { children: [old] };
+      oldBadges.push(old);
+      orphanBadges.push(old);
+    }
+    const allLinks = [avatar, display, handle, ...bioLinks];
+    const container = {
+      type: acct.type,
+      matches() { return true; },
+      querySelectorAll(selector) {
+        if (selector === 'a[href]') return allLinks;
+        if (selector === '[data-x-account-flag]') {
+          return [
+            ...row.children.filter(x => x.dataset?.xAccountFlag === 'true'),
+            ...oldBadges.filter(x => x.parentElement)
+          ];
+        }
+        return [];
+      }
+    };
+    display.closest = selector => selector === '[data-testid="UserCell"]' &&
+      acct.type === 'UserCell' ? container : null;
+    containers.push(container);
+    rows.push(row);
+    links.push(display);
+    handleLinks.push(handle);
+  }
+  const document = {
+    documentElement: { clientHeight: 800, clientWidth: 900 },
+    querySelectorAll: selector => selector.startsWith('[data-testid=')
+      ? containers : [],
+    addEventListener(name, fn) { listeners.set(name, fn); },
+    createElement: () => element({ textContent: '' })
+  };
+  const window = {
+    innerHeight: 800, innerWidth: 900,
     addEventListener(name, fn) { listeners.set(name, fn); }
   };
-  const win = { innerHeight: 800, innerWidth: 900,
-    addEventListener(name, fn) { listeners.set(name, fn); } };
   const browser = {
     runtime: {
       async sendMessage(message) {
         calls.push(message);
         if (options.lookup) return options.lookup(message);
-        const country = Object.hasOwn(regions, message.username)
-          ? regions[message.username]
-          : message.username === 'bob' ? 'United States' : 'Japan';
-        return { success: true, country, accurate: true };
+        return {
+          success: true,
+          country: Object.hasOwn(locations, message.username)
+            ? locations[message.username] : 'Japan',
+          accurate: true
+        };
       }
     }
   };
   load('content.js', {
-    browser, window: win, document: doc,
-    Intl, Date, setTimeout, clearTimeout, URL,
-    location: { href: 'https://x.com/home', origin: 'https://x.com' },
+    document, window, browser, Date, Intl, URL,
+    setTimeout, clearTimeout,
+    location: { origin: 'https://x.com', href: 'https://x.com/home' },
     MutationObserver: class { observe() {} }
   });
-  return { calls, links, containers, badges, listeners, rows };
+  const badge = index => rows[index].children.find(node => node.dataset?.xAccountFlag);
+  return { calls, listeners, links, handleLinks, rows, containers,
+    badges, badge, orphanBadges };
 }
 
-test('content script only requests visible X handles and displays returned flags', async () => {
+test('only visible account headers are looked up, not offscreen entries', async () => {
   const f = contentFixture();
-  await waitFor(() => f.badges.get('Alice')?.textContent === '🇯🇵' &&
-    f.badges.get('Bob')?.textContent === '🇺🇸');
-  assert.equal(f.calls.length, 2);
-  assert.equal(f.badges.get('Carol')?.textContent, '', 'offscreen slot stays empty');
-  assert.equal(f.calls.some(call => call.username === 'carol'), false);
-  assert.ok(f.calls.every(call => call.type === 'lookup'));
+  await waitFor(() => f.badge(0)?.textContent === '🇯🇵' &&
+    f.badge(1)?.textContent === '🇯🇵');
+  assert.deepEqual(f.calls.map(c => c.username).sort(), ['alice','bob']);
+  assert.equal(f.badge(2).textContent, '');
 });
 
-test('flags are siblings of the handle wrapper and remain in X’s horizontal row', async () => {
+test('flag occupies a fixed-width slot immediately BEFORE display-name link', async () => {
   const f = contentFixture();
-  await waitFor(() => f.badges.get('Alice')?.textContent === '🇯🇵');
-  const row = f.rows[0];
-  const badge = f.badges.get('Alice');
-  assert.equal(row.children[0], f.links[0].parentElement);
-  assert.equal(row.children[1], badge);
-  assert.equal(row.children[2].textContent, '·');
-  assert.equal(badge.parentElement, row);
-  assert.equal(f.links[0].textContent, '@Alice');
-  assert.equal(badge.style.display, 'inline-block');
-  assert.equal(badge.style.whiteSpace, 'nowrap');
+  await waitFor(() => f.badge(0)?.textContent === '🇯🇵');
+  const [badge, name] = f.rows[0].children;
+  assert.equal(name, f.links[0]);
+  assert.equal(f.badge(0), badge);
+  assert.equal(f.rows[0].style.flexDirection, 'row');
+  assert.equal(f.rows[0].style.alignItems, 'center');
   assert.equal(badge.style.width, '5.5rem');
   assert.equal(badge.style.flex, '0 0 5.5rem');
+  assert.equal(badge.style.backgroundColor, 'transparent');
+  assert.equal(badge.style.paddingInline, '0');
+  assert.equal(name.textContent, 'Alice');
 });
 
-test('non-country locations render as readable, non-wrapping region text', async () => {
-  const f = contentFixture({ regions: { alice: 'East Asia', bob: 'Europe' } });
-  await waitFor(() => f.badges.get('Alice')?.textContent === 'East Asia' &&
-    f.badges.get('Bob')?.textContent === 'Europe');
-  const badge = f.badges.get('Alice');
-  assert.equal(badge.title, 'Account based in East Asia (according to X)');
+test('broad geographical regions have square light-background chips', async () => {
+  const f = contentFixture({ locations: { alice: 'East Asia', bob: 'Europe' } });
+  await waitFor(() => f.badge(0)?.textContent === 'East Asia' &&
+    f.badge(1)?.textContent === 'Europe');
+  const badge = f.badge(0);
+  assert.equal(badge.style.backgroundColor, '#f5f5f5');
+  assert.equal(badge.style.color, '#171717');
+  assert.equal(badge.style.paddingInline, '0.35rem');
+  assert.equal(badge.style.borderRadius, '0');
+  assert.equal(badge.style.boxSizing, 'border-box');
   assert.equal(badge.style.width, '5.5rem');
   assert.equal(badge.style.textOverflow, 'ellipsis');
-  assert.equal(f.rows[0].children[1], badge);
+  assert.equal(badge.style.whiteSpace, 'nowrap');
+  assert.equal(badge.title, 'Account based in East Asia (according to X)');
 });
 
-test('subsequent scans reuse the badge instead of adding duplicates', async () => {
-  const f = contentFixture({ regions: { alice: 'East Asia' } });
-  await waitFor(() => f.badges.get('Alice')?.textContent === 'East Asia');
-  const badge = f.badges.get('Alice');
-  f.listeners.get('scroll')();
-  await new Promise(resolve => setTimeout(resolve, 120));
-  assert.equal(f.rows[0].children.filter(node => node.dataset?.xAccountFlag).length, 1);
-  assert.equal(f.rows[0].children[1], badge);
-  assert.equal(f.rows[0].insertions, 1, 'repeat scans must not move existing badges');
-});
-
-
-test('placeholder reserves the final width while a lookup is still pending', async () => {
+test('the fixed-width placeholder precedes the name without layout shift', async () => {
   let finish;
-  const waiting = new Promise(resolve => { finish = resolve; });
-  const f = contentFixture({ lookup: () => waiting });
-  const row = f.rows[0];
-  const slot = row.children[1];
-  assert.equal(row.children[0], f.links[0].parentElement);
+  const pending = new Promise(resolve => { finish = resolve; });
+  const f = contentFixture({ lookup: () => pending });
+  const slot = f.badge(0);
+  assert.equal(f.rows[0].children[0], slot);
+  assert.equal(f.rows[0].children[1], f.links[0]);
   assert.equal(slot.textContent, '');
   assert.equal(slot.style.width, '5.5rem');
-  assert.equal(slot.style.backgroundSize, '3.25rem 0.55rem');
   assert.match(slot.style.backgroundImage, /linear-gradient/);
-  assert.equal(row.children[2].textContent, '·');
-  finish({ success: true, country: 'United States', accurate: true });
-  await waitFor(() => slot.textContent === '🇺🇸');
-  assert.equal(row.children[1], slot, 'must reuse the placeholder element');
-  assert.equal(slot.style.width, '5.5rem', 'same width before and after loading');
-  assert.equal(slot.style.backgroundImage, 'none');
-  assert.equal(row.insertions, 1);
-});
-
-test('region replaces a placeholder without shifting timestamp or resizing', async () => {
-  let finish;
-  const waiting = new Promise(resolve => { finish = resolve; });
-  const f = contentFixture({ lookup: () => waiting });
-  const row = f.rows[0], slot = row.children[1];
-  finish({ success: true, country: 'East Asia', accurate: false });
+  finish({ success: true, country: 'East Asia' });
   await waitFor(() => slot.textContent === 'East Asia');
-  assert.equal(row.children[1], slot);
-  assert.equal(row.children[2].textContent, '·');
+  assert.equal(f.rows[0].children[0], slot);
   assert.equal(slot.style.width, '5.5rem');
-  assert.match(slot.title, /X marks this location as uncertain/);
+  assert.equal(slot.style.backgroundImage, 'none');
+  assert.equal(slot.style.backgroundColor, '#f5f5f5');
+  assert.equal(f.rows[0].insertions, 1);
 });
 
-test('empty or failed lookups clear the placeholder but retain its width', async () => {
-  for (const outcome of [
-    { success: true, country: null, accurate: null },
-    { success: false },
-    { success: false, retryAt: Date.now() + 300 }
+test('empty and failed lookups leave a blank reserved slot', async () => {
+  for (const result of [
+    { success: true, country: null },
+    { success: false }
   ]) {
     let finish;
     const pending = new Promise(resolve => { finish = resolve; });
     const f = contentFixture({ lookup: () => pending });
-    const row = f.rows[0], slot = row.children[1];
-    finish(outcome);
+    const slot = f.badge(0);
+    finish(result);
     await waitFor(() => slot.style.backgroundImage === 'none');
     assert.equal(slot.textContent, '');
+    assert.equal(f.rows[0].children[0], slot);
     assert.equal(slot.style.width, '5.5rem');
-    assert.equal(row.children[1], slot);
-    assert.equal(row.children[2].textContent, '·');
+    assert.equal(slot.style.backgroundColor, 'transparent');
   }
 });
 
-test('cached rows retain the fixed-width slot through subsequent scans', async () => {
-  const f = contentFixture({ regions: { alice: 'East Asia' } });
-  await waitFor(() => f.badges.get('Alice')?.textContent === 'East Asia');
-  const slot = f.rows[0].children[1];
+test('rescans reuse existing slot rather than duplicating it', async () => {
+  const f = contentFixture({ locations: { alice: 'East Asia' } });
+  await waitFor(() => f.badge(0)?.textContent === 'East Asia');
+  const slot = f.badge(0);
   f.listeners.get('scroll')();
   await new Promise(resolve => setTimeout(resolve, 120));
-  assert.equal(f.rows[0].children[1], slot);
-  assert.equal(slot.style.backgroundImage, 'none');
-  assert.equal(slot.style.width, '5.5rem');
+  assert.equal(f.badge(0), slot);
+  assert.equal(f.rows[0].children.length, 2);
   assert.equal(f.rows[0].insertions, 1);
+});
+
+test('UserCell selects the display name and ignores its biography @mentions', async () => {
+  const f = contentFixture({
+    accounts: [{
+      type: 'UserCell', handle: 'AyatsunoYuni', name: '유니 Yuni',
+      bio: ['StelLive_kr', 'rainydayinabi', 'KA_XA_'],
+      legacyBioBadge: true
+    }],
+    locations: { ayatsunoyuni: 'Japan' }
+  });
+  await waitFor(() => f.badge(0)?.textContent === '🇯🇵');
+  assert.deepEqual(f.calls.map(call => call.username), ['ayatsunoyuni']);
+  assert.equal(f.rows[0].children[0], f.badge(0));
+  assert.equal(f.rows[0].children[1], f.links[0]);
+  assert.equal(f.links[0].textContent, '유니 Yuni');
+  assert.equal(f.handleLinks[0].textContent, '@AyatsunoYuni');
+  assert.equal(f.orphanBadges[0].parentElement, null, 'remove old bio decorations');
+});
+
+test('invalid bio-only containers do not start network lookups', async () => {
+  const f = contentFixture({
+    accounts: [{ type: 'UserCell', handle: 'NoName', name: '',
+      bio: ['OtherAccount'] }]
+  });
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.rows[0].children.length, 1);
 });
