@@ -13,7 +13,7 @@ Temporary add-ons are removed when Firefox restarts. Permanent Firefox installat
 ## How it works
 
 - The MAIN-world page.js captures X's authorization header from either fetch or XMLHttpRequest. It reads the ct0 CSRF cookie when making lookups. Neither secret is sent to the isolated content script or persisted.
-- The isolated content.js detects account handles, queues lookups at a three-second minimum interval, and draws flags.
+- The isolated content.js scans only visible handles for new lookups. Background requests are spaced three seconds apart; a hovered or keyboard-focused account takes priority with a 750 ms minimum gap from the preceding request. Cached flags appear immediately.
 - AboutAccountQuery requests use the current X session. The native query ID is learned when visible, with two known IDs as fallbacks if the first is missing.
 - Successful country results are cached locally for 30 days; successful empty results for six hours. Transient errors are not persisted.
 - HTTP 429, or a zero remaining request budget, pauses lookups until the API resets.
