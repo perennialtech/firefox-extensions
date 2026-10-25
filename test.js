@@ -132,8 +132,7 @@ function contentFixture(options = {}) {
     { handle: 'Carol', name: 'Carol', type: 'User-Name', offscreen: true }
   ];
   const locations = options.locations || {};
-  const rows = [], links = [], containers = [], handleLinks = [];
-  const orphanBadges = [];
+  const rows = [], links = [], containers = [], handleLinks = [], bioRows = [];
 
   function element(attrs = {}) {
     return {
@@ -191,30 +190,46 @@ function contentFixture(options = {}) {
       }
     };
     display.parentElement = row;
-    const bioLinks = (acct.bio || []).map(name => element({
-      attrs: { href: '/' + name, role: 'link' },
-      textContent: '@' + name
-    }));
-    const oldBadges = [];
-    if (acct.legacyBioBadge) {
-      const old = element({
-        dataset: { xAccountFlag: 'true', xAccountHandle: 'ka_xa_' },
-        textContent: 'East Asia'
+    const mentions = (acct.bio || []).map(name => {
+      const link = element({
+        attrs: { href: '/' + name, role: 'link' },
+        textContent: '@' + name,
+        getBoundingClientRect: () => bounds(acct)
       });
-      old.parentElement = { children: [old] };
-      oldBadges.push(old);
-      orphanBadges.push(old);
-    }
+      const wrapper = element({ children: [link] });
+      const inlineRow = {
+        style: {}, children: [wrapper], insertions: 0,
+        insertBefore(child, anchor) {
+          this.insertions++;
+          if (child.parentElement) child.remove();
+          const index = anchor ? this.children.indexOf(anchor) : this.children.length;
+          this.children.splice(index < 0 ? this.children.length : index, 0, child);
+          child.parentElement = this;
+        }
+      };
+      link.parentElement = wrapper;
+      wrapper.parentElement = inlineRow;
+      Object.defineProperty(wrapper, 'nextSibling', {
+        get() { return this.parentElement.children[this.parentElement.children.indexOf(this) + 1] || null; }
+      });
+      return { link, row: inlineRow, name };
+    });
+    const bioLinks = mentions.map(item => item.link);
+    bioRows.push(mentions);
     const allLinks = [avatar, display, handle, ...bioLinks];
     const container = {
       type: acct.type,
+      getAttribute(name) {
+        return name === 'data-testid' ? acct.type : null;
+      },
       matches() { return true; },
       querySelectorAll(selector) {
         if (selector === 'a[href]') return allLinks;
+        if (selector === 'div[dir="auto"] a[href]') return bioLinks;
         if (selector === '[data-x-account-flag]') {
           return [
             ...row.children.filter(x => x.dataset?.xAccountFlag === 'true'),
-            ...oldBadges.filter(x => x.parentElement)
+            ...mentions.flatMap(item => item.row.children.filter(x => x.dataset?.xAccountFlag === 'true'))
           ];
         }
         return [];
@@ -260,7 +275,7 @@ function contentFixture(options = {}) {
   });
   const badge = index => rows[index].children.find(node => node.dataset?.xAccountFlag);
   return { calls, listeners, links, handleLinks, rows, containers,
-    badges, badge, orphanBadges };
+    badges, badge, bioRows };
 }
 
 test('only visible account headers are looked up, not offscreen entries', async () => {
@@ -350,29 +365,50 @@ test('rescans reuse existing slot rather than duplicating it', async () => {
   assert.equal(f.rows[0].insertions, 1);
 });
 
-test('UserCell selects the display name and ignores its biography @mentions', async () => {
+test('UserCell puts account badge before display name and keeps bio mentions inline', async () => {
   const f = contentFixture({
     accounts: [{
       type: 'UserCell', handle: 'AyatsunoYuni', name: '유니 Yuni',
-      bio: ['StelLive_kr', 'rainydayinabi', 'KA_XA_'],
-      legacyBioBadge: true
+      bio: ['StelLive_kr', 'rainydayinabi', 'KA_XA_']
     }],
-    locations: { ayatsunoyuni: 'Japan' }
+    locations: {
+      ayatsunoyuni: 'Japan',
+      stellive_kr: 'South Korea',
+      rainydayinabi: 'Korea',
+      ka_xa_: 'East Asia'
+    }
   });
-  await waitFor(() => f.badge(0)?.textContent === '🇯🇵');
-  assert.deepEqual(f.calls.map(call => call.username), ['ayatsunoyuni']);
+  await waitFor(() => f.badge(0)?.textContent === '🇯🇵' &&
+    f.bioRows[0][2].row.children[1]?.textContent === 'East Asia');
+  assert.deepEqual(f.calls.map(call => call.username).sort(),
+    ['ayatsunoyuni', 'stellive_kr', 'rainydayinabi', 'ka_xa_'].sort());
   assert.equal(f.rows[0].children[0], f.badge(0));
   assert.equal(f.rows[0].children[1], f.links[0]);
   assert.equal(f.links[0].textContent, '유니 Yuni');
   assert.equal(f.handleLinks[0].textContent, '@AyatsunoYuni');
-  assert.equal(f.orphanBadges[0].parentElement, null, 'remove old bio decorations');
+
+  const mentions = f.bioRows[0];
+  for (const mention of mentions) {
+    assert.equal(mention.row.children[0].children[0], mention.link,
+      'mention link must retain its native inline wrapper');
+    assert.equal(mention.row.children.length, 2);
+  }
+  const label = mentions[2].row.children[1];
+  assert.equal(label.style.backgroundColor, '#f5f5f5');
+  assert.equal(label.style.color, '#171717');
+  assert.equal(label.style.paddingInline, '0.35rem');
+  assert.equal(label.style.borderRadius, '0');
+  assert.equal(mentions[2].row.style.flexDirection, undefined,
+    'do not override inline bio layout');
 });
 
-test('invalid bio-only containers do not start network lookups', async () => {
+
+test('bio-only containers without account identity are not looked up', async () => {
   const f = contentFixture({
     accounts: [{ type: 'UserCell', handle: 'NoName', name: '',
       bio: ['OtherAccount'] }]
   });
-  assert.equal(f.calls.length, 0);
-  assert.equal(f.rows[0].children.length, 1);
+  await waitFor(() => f.bioRows[0][0].row.children.length === 2);
+  assert.deepEqual(f.calls.map(call => call.username), ['otheraccount']);
+  assert.equal(f.rows[0].children.length, 1, 'no account identity badge');
 });

@@ -20,7 +20,7 @@ For permanent installation in standard Firefox, package and sign the extension.
 
 - **`content.js`** identifies handles and displays flags or region names as
   separate flex-row siblings before X's display-name anchor (never inside its link).
-  UserCell card biographies are excluded from account lookup and decoration.
+  UserCell card biographies retain inline location annotations for their @mentions.
   It only looks up accounts
   presently visible on the page, giving pointer/keyboard focus priority. Cached
   flags are rendered immediately. It makes no HTTP requests itself.
