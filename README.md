@@ -1,8 +1,8 @@
 # X Account Location Flags for Firefox
 
 A small Firefox extension that displays X's **Account based in** metadata
-beside handles in timelines, replies and user lists. Countries appear as flags;
-larger geographic regions (for example, East Asia) appear as muted text on
+before display names in timelines, replies and user lists. Countries appear as flags;
+larger geographic regions (for example, East Asia) appear as square, light chips on
 the same line as the handle and timestamp. A subtle fixed-width placeholder
 reserves space before FxTwitter responds, preventing timestamp shifts. Data comes from
 [FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/).
@@ -19,7 +19,8 @@ For permanent installation in standard Firefox, package and sign the extension.
 ## Design
 
 - **`content.js`** identifies handles and displays flags or region names as
-  separate flex-row siblings of X's handle wrapper (never inside its link).
+  separate flex-row siblings before X's display-name anchor (never inside its link).
+  UserCell card biographies are excluded from account lookup and decoration.
   It only looks up accounts
   presently visible on the page, giving pointer/keyboard focus priority. Cached
   flags are rendered immediately. It makes no HTTP requests itself.

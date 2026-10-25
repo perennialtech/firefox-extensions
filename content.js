@@ -44,22 +44,37 @@
     const containers = [];
     if (root.matches?.(USER_SELECTOR)) containers.push(root);
     containers.push(...root.querySelectorAll(USER_SELECTOR));
-    const handles = [];
+    const found = [];
+    const seen = new Set();
     for (const container of containers) {
-      for (const link of container.querySelectorAll('a[href]')) {
-        let pathname;
-        try {
-          const url = new URL(link.getAttribute('href'), location.href);
-          if (url.origin !== location.origin) continue;
-          pathname = url.pathname;
-        } catch (_) { continue; }
-        const match = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(pathname);
-        if (!match) continue;
-        if (link.textContent.trim().toLowerCase() !== '@' + match[1].toLowerCase()) continue;
-        handles.push({ link, username: match[1].toLowerCase() });
+      // UserCell also contains bio links. Only decorate the account header,
+      // identified by a display-name link AND its matching @handle link.
+      const links = [...container.querySelectorAll('a[href]')];
+      const handles = new Set();
+      for (const link of links) {
+        if (link.getAttribute('tabindex') !== '-1') continue;
+        const value = link.textContent.trim();
+        const path = link.getAttribute('href');
+        if (!path || !/^@[a-zA-Z0-9_]{1,15}$/.test(value)) continue;
+        if (path.toLowerCase() === '/' + value.slice(1).toLowerCase()) {
+          handles.add(value.slice(1).toLowerCase());
+        }
+      }
+      for (const link of links) {
+        if (link.getAttribute('tabindex') === '-1') continue;
+        if (link.getAttribute('role') !== 'link') continue;
+        const path = link.getAttribute('href');
+        const match = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(path || '');
+        if (!match || !handles.has(match[1].toLowerCase())) continue;
+        // The display-name link is distinct from the handle and avatar links.
+        if (link.textContent.trim().startsWith('@') || !link.textContent.trim()) continue;
+        if (seen.has(link)) continue;
+        seen.add(link);
+        found.push({ link, username: match[1].toLowerCase() });
+        break;
       }
     }
-    return handles;
+    return found;
   }
 
   function visible(link) {
@@ -70,26 +85,25 @@
   }
 
   function paint(link, entry, loading = false) {
-    // The handle link is a nested flex layout; inserting inside it wraps the
-    // badge. Use a fixed-size sibling slot in the native horizontal metadata row.
-    const handleSlot = link.parentElement;
-    const row = handleSlot?.parentElement;
+    // Insert before the DISPLAY NAME, not inside X's handle link. Both tweet
+    // headers and UserCell cards put that link in a dedicated wrapper.
+    const row = link.parentElement;
     if (!row) return;
     const username = link.getAttribute('href')?.replace(/^\//, '').toLowerCase();
     const existing = [...row.children].filter(child => child.dataset?.xAccountFlag === 'true');
     let badge = existing.find(child => child.dataset.xAccountHandle === username);
-    // React can recycle a username row for another author.
     for (const old of existing) if (old !== badge) old.remove();
     if (!badge) {
       badge = document.createElement('span');
       badge.dataset.xAccountFlag = 'true';
       badge.dataset.xAccountHandle = username;
       badge.style.display = 'inline-block';
+      badge.style.boxSizing = 'border-box';
       badge.style.width = LOCATION_WIDTH;
       badge.style.flex = '0 0 ' + LOCATION_WIDTH;
       badge.style.minWidth = LOCATION_WIDTH;
       badge.style.maxWidth = LOCATION_WIDTH;
-      badge.style.marginInlineStart = '0.35rem';
+      badge.style.marginInlineEnd = '0.35rem';
       badge.style.whiteSpace = 'nowrap';
       badge.style.overflow = 'hidden';
       badge.style.textOverflow = 'ellipsis';
@@ -98,20 +112,35 @@
       badge.style.lineHeight = '1.25rem';
       badge.style.height = '1.25rem';
     }
-    if (badge.parentElement !== row || badge.previousElementSibling !== handleSlot) {
-      row.insertBefore(badge, handleSlot.nextSibling);
+    // X's inner wrapper is often a flex column, even when its outer name row
+    // is horizontal. Force its two children into one row without moving the
+    // native anchor into a new wrapper (React owns the original DOM).
+    row.style.flexDirection = 'row';
+    row.style.alignItems = 'center';
+    if (badge.parentElement !== row || badge.nextElementSibling !== link) {
+      row.insertBefore(badge, link);
+    }
+
+    // Older builds inserted badges after @handles and within UserCell bios.
+    // Remove those orphaned elements, never decorate unrelated bio mentions.
+    const card = link.closest?.('[data-testid="UserCell"]');
+    if (card) {
+      for (const old of card.querySelectorAll('[data-x-account-flag]')) {
+        if (old !== badge) old.remove();
+      }
     }
 
     const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
     const flag = flagFor(location);
     const display = flag || location;
     if (badge.textContent !== display) badge.textContent = display;
-    badge.style.fontSize = flag ? '1em' : '0.85em';
-    badge.style.color = flag ? 'inherit' : 'rgb(113, 118, 123)';
+    const isRegion = !!display && !flag;
+    badge.style.fontSize = isRegion ? '0.75rem' : '1rem';
+    badge.style.paddingInline = isRegion ? '0.35rem' : '0';
+    badge.style.backgroundColor = isRegion ? '#f5f5f5' : 'transparent';
+    badge.style.color = isRegion ? '#171717' : 'inherit';
+    badge.style.borderRadius = '0';
 
-    // An unintrusive skeleton occupies the same width as the final location.
-    // Once a lookup settles, keep the empty slot reserved even if X exposes
-    // no location or the API failed, so the timestamp never jumps.
     const pending = loading && !display;
     badge.style.backgroundImage = pending
       ? 'linear-gradient(rgba(113, 118, 123, 0.25), rgba(113, 118, 123, 0.25))'
