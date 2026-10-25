@@ -121,29 +121,57 @@ test('HTTP 429 pauses the service and persists cooldown across background restar
   assert.equal(again.calls.length, 0);
 });
 
-function contentFixture() {
-  const calls = [], listeners = new Map();
-  const handles = ['Alice', 'Bob', 'Carol'];
-  const badges = new Map();
-  const links = handles.map((name, index) => ({
-    name,
-    getAttribute() { return '/' + name; },
-    querySelector() { return badges.get(name) || null; },
-    get textContent() { return '@' + name + (badges.get(name)?.textContent || ''); },
-    getBoundingClientRect() {
-      return { top: index === 2 ? 1400 : 50, bottom: index === 2 ? 1420 : 70,
-        left: 0, right: 90 };
-    },
-    append(node) { badges.set(name, node); node.remove = () => badges.delete(name); }
-  }));
-  const containers = links.map(link => ({
-    matches: () => true,
-    querySelectorAll: () => [link]
-  }));
+function contentFixture(options = {}) {
+  const calls = [], listeners = new Map(), badges = new Map();
+  const handles = options.handles || ['Alice', 'Bob', 'Carol'];
+  const regions = options.regions || {};
+  const links = [];
+  const containers = [];
+  const rows = [];
+  // Minimal DOM representation of the supplied X HTML: a flex row containing
+  // a handle-wrapper div, then the · separator, then a date div. The handle
+  // <a> owns a text div, but must NOT own our location badge.
+  for (const [index, name] of handles.entries()) {
+    const slot = { children: [], parentElement: null };
+    const dot = { textContent: '·', parentElement: null };
+    const date = { textContent: 'Mar 22, 2024', parentElement: null };
+    const row = {
+      children: [slot, dot, date],
+      insertBefore(child, before) {
+        if (child.parentElement) child.remove();
+        const position = before ? this.children.indexOf(before) : -1;
+        this.children.splice(position < 0 ? this.children.length : position, 0, child);
+        child.parentElement = this;
+        child.remove = () => {
+          const at = this.children.indexOf(child);
+          if (at !== -1) this.children.splice(at, 1);
+          child.parentElement = null;
+        };
+        badges.set(name, child);
+      }
+    };
+    for (const child of row.children) child.parentElement = row;
+    const link = {
+      name, parentElement: slot,
+      getAttribute() { return '/' + name; },
+      querySelector: () => null,
+      get textContent() { return '@' + name; },
+      getBoundingClientRect() {
+        return { top: index === 2 ? 1400 : 50, bottom: index === 2 ? 1420 : 70,
+          left: 0, right: 90 };
+      }
+    };
+    const container = { matches: () => true, querySelectorAll: () => [link] };
+    links.push(link);
+    containers.push(container);
+    rows.push(row);
+  }
   const doc = {
     documentElement: { clientHeight: 800, clientWidth: 900 },
     querySelectorAll: () => containers,
-    createElement: () => ({ dataset: {}, style: {}, textContent: '', setAttribute() {} }),
+    createElement: () => ({
+      dataset: {}, style: {}, textContent: '', parentElement: null, setAttribute() {}
+    }),
     addEventListener(name, fn) { listeners.set(name, fn); }
   };
   const win = { innerHeight: 800, innerWidth: 900,
@@ -152,7 +180,10 @@ function contentFixture() {
     runtime: {
       async sendMessage(message) {
         calls.push(message);
-        return { success: true, country: message.username === 'bob' ? 'United States' : 'Japan', accurate: true };
+        const country = Object.hasOwn(regions, message.username)
+          ? regions[message.username]
+          : message.username === 'bob' ? 'United States' : 'Japan';
+        return { success: true, country, accurate: true };
       }
     }
   };
@@ -162,7 +193,7 @@ function contentFixture() {
     location: { href: 'https://x.com/home', origin: 'https://x.com' },
     MutationObserver: class { observe() {} }
   });
-  return { calls, links, containers, badges, listeners };
+  return { calls, links, containers, badges, listeners, rows };
 }
 
 test('content script only requests visible X handles and displays returned flags', async () => {
@@ -172,4 +203,40 @@ test('content script only requests visible X handles and displays returned flags
   assert.equal(f.calls.length, 2);
   assert.equal(f.badges.has('Carol'), false);
   assert.ok(f.calls.every(call => call.type === 'lookup'));
+});
+
+test('flags are siblings of the handle wrapper and remain in X’s horizontal row', async () => {
+  const f = contentFixture();
+  await waitFor(() => f.badges.get('Alice')?.textContent === '🇯🇵');
+  const row = f.rows[0];
+  const badge = f.badges.get('Alice');
+  assert.equal(row.children[0], f.links[0].parentElement);
+  assert.equal(row.children[1], badge);
+  assert.equal(row.children[2].textContent, '·');
+  assert.equal(badge.parentElement, row);
+  assert.equal(f.links[0].textContent, '@Alice');
+  assert.equal(badge.style.display, 'inline-flex');
+  assert.equal(badge.style.whiteSpace, 'nowrap');
+  assert.equal(badge.style.flexShrink, '0');
+});
+
+test('non-country locations render as readable, non-wrapping region text', async () => {
+  const f = contentFixture({ regions: { alice: 'East Asia', bob: 'Europe' } });
+  await waitFor(() => f.badges.get('Alice')?.textContent === 'East Asia' &&
+    f.badges.get('Bob')?.textContent === 'Europe');
+  const badge = f.badges.get('Alice');
+  assert.equal(badge.title, 'Account based in East Asia (according to X)');
+  assert.equal(badge.style.flexShrink, '1');
+  assert.equal(badge.style.textOverflow, 'ellipsis');
+  assert.equal(f.rows[0].children[1], badge);
+});
+
+test('subsequent scans reuse the badge instead of adding duplicates', async () => {
+  const f = contentFixture({ regions: { alice: 'East Asia' } });
+  await waitFor(() => f.badges.get('Alice')?.textContent === 'East Asia');
+  const badge = f.badges.get('Alice');
+  f.listeners.get('scroll')();
+  await new Promise(resolve => setTimeout(resolve, 120));
+  assert.equal(f.rows[0].children.filter(node => node.dataset?.xAccountFlag).length, 1);
+  assert.equal(f.rows[0].children[1], badge);
 });

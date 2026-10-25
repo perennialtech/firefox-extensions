@@ -1,9 +1,11 @@
 # X Account Location Flags for Firefox
 
-A small Firefox extension that adds country flags beside X account handles in
-timelines, replies and user lists. Flags reflect X's **Account based in**
-metadata, retrieved from [FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/).
-They do not prove a person's real-world location.
+A small Firefox extension that displays X's **Account based in** metadata
+beside handles in timelines, replies and user lists. Countries appear as flags;
+larger geographic regions (for example, East Asia) appear as muted text on
+the same line as the handle and timestamp. Data comes from
+[FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/).
+It does not prove a person's real-world location.
 
 ## Install temporarily
 
@@ -15,7 +17,9 @@ For permanent installation in standard Firefox, package and sign the extension.
 
 ## Design
 
-- **`content.js`** identifies handles and displays flags. It only looks up accounts
+- **`content.js`** identifies handles and displays flags or region names as
+  separate flex-row siblings of X's handle wrapper (never inside its link).
+  It only looks up accounts
   presently visible on the page, giving pointer/keyboard focus priority. Cached
   flags are rendered immediately. It makes no HTTP requests itself.
 - **`background.js`** requests
@@ -36,8 +40,8 @@ Looking up an account sends its public handle to FxTwitter, alongside normal
 HTTP request metadata such as your network IP. No other account information,
 X cookies, or X authorization headers are transmitted. FxTwitter is an
 independent service, and its availability and accuracy depend on both FxTwitter
-and X. No flags appear for countries not exposed by the API or for geographic
-regions lacking a country flag.
+and X. Unknown location values are displayed as text rather than being
+silently dropped or misrepresented as country flags.
 
 ## Test
 

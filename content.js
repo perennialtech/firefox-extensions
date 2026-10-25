@@ -52,9 +52,7 @@
         } catch (_) { continue; }
         const match = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(pathname);
         if (!match) continue;
-        const badge = link.querySelector('[data-x-account-flag]');
-        const text = link.textContent.replace(badge?.textContent || '', '').trim();
-        if (text.toLowerCase() !== '@' + match[1].toLowerCase()) continue;
+        if (link.textContent.trim().toLowerCase() !== '@' + match[1].toLowerCase()) continue;
         handles.push({ link, username: match[1].toLowerCase() });
       }
     }
@@ -69,24 +67,54 @@
   }
 
   function paint(link, entry) {
-    let badge = link.querySelector('[data-x-account-flag]');
-    const flag = flagFor(entry?.country);
-    if (!flag) {
-      if (badge) badge.remove();
+    // X's handle <a> contains a flex column. Appending a badge *inside* it
+    // creates an unwanted second line. Instead put it beside the handle's
+    // wrapper, as a sibling of X's dot separator and timestamp.
+    const slot = link.parentElement;
+    const row = slot?.parentElement;
+    if (!row) return;
+    const existing = [...row.children].filter(child => child.dataset?.xAccountFlag === 'true');
+    const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
+    const flag = flagFor(location);
+    const display = flag || location;
+    if (!display) {
+      for (const badge of existing) badge.remove();
       return;
     }
+    // React may recycle a row for a different account. Reuse only the badge
+    // associated with the current handle, not with the former occupant.
+    const username = link.getAttribute('href')?.replace(/^\//, '').toLowerCase();
+    let badge = existing.find(child => child.dataset.xAccountHandle === username);
+    for (const old of existing) if (old !== badge) old.remove();
     if (!badge) {
       badge = document.createElement('span');
       badge.dataset.xAccountFlag = 'true';
-      badge.style.marginInlineStart = '0.3em';
-      badge.style.display = 'inline-block';
-      link.append(badge);
+      badge.dataset.xAccountHandle = username;
     }
-    if (badge.textContent !== flag) badge.textContent = flag;
-    const label = 'Account based in ' + entry.country + ' (according to X)' +
+    // Keep the badge in the native horizontal flex row, immediately after the
+    // handle slot and before the separator/date, even after X reorders nodes.
+    if (badge.parentElement !== row || badge.previousElementSibling !== slot) {
+      row.insertBefore(badge, slot.nextSibling);
+    }
+    if (badge.textContent !== display) badge.textContent = display;
+    const label = 'Account based in ' + location + ' (according to X)' +
       (entry.accurate === false ? '; X marks this location as uncertain' : '');
     badge.title = label;
     badge.setAttribute('aria-label', label);
+    badge.style.display = 'inline-flex';
+    badge.style.alignItems = 'center';
+    badge.style.alignSelf = 'center';
+    badge.style.marginInlineStart = '0.35em';
+    badge.style.flexShrink = flag ? '0' : '1';
+    badge.style.minWidth = '0';
+    badge.style.whiteSpace = 'nowrap';
+    badge.style.lineHeight = '1';
+    badge.style.verticalAlign = 'middle';
+    badge.style.fontSize = flag ? '1em' : '0.85em';
+    badge.style.color = flag ? 'inherit' : 'rgb(113, 118, 123)';
+    badge.style.maxWidth = flag ? '' : '11em';
+    badge.style.overflow = flag ? '' : 'hidden';
+    badge.style.textOverflow = flag ? '' : 'ellipsis';
   }
 
   function enqueue(username, priority = false) {
@@ -152,7 +180,8 @@
     const visibleNames = new Set();
     for (const { link, username } of findHandles()) {
       const current = entries.get(username);
-      if (current?.expires > Date.now()) paint(link, current);
+      // Clear badges on recycled X rows as well as updating cached locations.
+      paint(link, current?.expires > Date.now() ? current : null);
       if (visible(link)) {
         visibleNames.add(username);
         if (!current || current.expires <= Date.now()) enqueue(username);
