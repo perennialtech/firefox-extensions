@@ -12,7 +12,8 @@
     try {
       const [input, init] = args;
       const url = typeof input === 'string' ? input : input?.url;
-      if (url && new URL(url, location.href).pathname.startsWith('/i/api/graphql/')) {
+      if (url && new URL(url, location.href).origin === location.origin &&
+          new URL(url, location.href).pathname.startsWith('/i/api/graphql/')) {
         const headers = new Headers(input instanceof Request ? input.headers : undefined);
         new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
         if (headers.has('authorization') && headers.has('x-csrf-token')) {

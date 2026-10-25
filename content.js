@@ -120,11 +120,13 @@
           queued.delete(username);
           if (!result.success) {
             // Avoid hammering the API when authentication or connectivity fails.
-            cache.set(username, { country: null, expires: Date.now() + 5 * 60 * 1000 });
+            cache.set(username, { country: null, expires: Date.now() + 5 * 60 * 1000, transient: true });
           } else {
             cache.set(username, { country: result.country, expires: Date.now() + CACHE_AGE });
             // Only successful results are cached; no credentials are stored.
-            void browser.storage.local.set({ [CACHE_KEY]: Object.fromEntries(cache) }).catch(() => {});
+            void browser.storage.local.set({ [CACHE_KEY]: Object.fromEntries(
+              [...cache].filter(([, value]) => !value.transient && value.expires > Date.now())
+            ) }).catch(() => {});
             scheduleScan();
           }
         }
