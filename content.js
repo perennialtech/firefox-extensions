@@ -5,7 +5,7 @@
   const USER_SELECTOR = '[data-testid="User-Name"], [data-testid="UserName"], [data-testid="UserCell"]';
   const MAX_IN_FLIGHT = 4;
   const MAX_QUEUE = 150;
-  // Reserve one consistent footprint for flags, region names and empty results.
+  // Reserve one consistent footprint for location chips and empty results.
   // Without it, the timestamp moves horizontally after every API response.
   const LOCATION_WIDTH = '5.5rem';
   const entries = new Map();
@@ -14,30 +14,94 @@
   const inFlight = new Set();
   const queue = [];
   const regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
-  const codes = new Map([
-    ['united states of america', 'US'], ['usa', 'US'], ['uk', 'GB'],
-    ['russia', 'RU'], ['south korea', 'KR'], ['north korea', 'KP'],
-    ['korea', 'KR'], ['turkey', 'TR'], ['czech republic', 'CZ'],
-    ['taiwan', 'TW'], ['hong kong', 'HK']
-  ]);
-  for (let a = 65; a <= 90; a++) {
-    for (let b = 65; b <= 90; b++) {
-      const code = String.fromCharCode(a, b);
-      const name = regionNames.of(code);
-      if (name !== code) codes.set(name.toLowerCase(), code);
-    }
+  // ISO 3166-1 alpha-2 -> alpha-3 (iso-codes project). Limit country
+  // lookups to assigned ISO codes: CLDR also names non-country regions.
+  const countryCodes = new Map(([
+    'ADAND AEARE AFAFG AGATG AIAIA ALALB AMARM AOAGO AQATA ARARG ASASM ATAUT AUAUS AWABW',
+    'AXALA AZAZE BABIH BBBRB BDBGD BEBEL BFBFA BGBGR BHBHR BIBDI BJBEN BLBLM BMBMU BNBRN',
+    'BOBOL BQBES BRBRA BSBHS BTBTN BVBVT BWBWA BYBLR BZBLZ CACAN CCCCK CDCOD CFCAF CGCOG',
+    'CHCHE CICIV CKCOK CLCHL CMCMR CNCHN COCOL CRCRI CUCUB CVCPV CWCUW CXCXR CYCYP CZCZE',
+    'DEDEU DJDJI DKDNK DMDMA DODOM DZDZA ECECU EEEST EGEGY EHESH ERERI ESESP ETETH FIFIN',
+    'FJFJI FKFLK FMFSM FOFRO FRFRA GAGAB GBGBR GDGRD GEGEO GFGUF GGGGY GHGHA GIGIB GLGRL',
+    'GMGMB GNGIN GPGLP GQGNQ GRGRC GSSGS GTGTM GUGUM GWGNB GYGUY HKHKG HMHMD HNHND HRHRV',
+    'HTHTI HUHUN IDIDN IEIRL ILISR IMIMN ININD IOIOT IQIRQ IRIRN ISISL ITITA JEJEY JMJAM',
+    'JOJOR JPJPN KEKEN KGKGZ KHKHM KIKIR KMCOM KNKNA KPPRK KRKOR KWKWT KYCYM KZKAZ LALAO',
+    'LBLBN LCLCA LILIE LKLKA LRLBR LSLSO LTLTU LULUX LVLVA LYLBY MAMAR MCMCO MDMDA MEMNE',
+    'MFMAF MGMDG MHMHL MKMKD MLMLI MMMMR MNMNG MOMAC MPMNP MQMTQ MRMRT MSMSR MTMLT MUMUS',
+    'MVMDV MWMWI MXMEX MYMYS MZMOZ NANAM NCNCL NENER NFNFK NGNGA NINIC NLNLD NONOR NPNPL',
+    'NRNRU NUNIU NZNZL OMOMN PAPAN PEPER PFPYF PGPNG PHPHL PKPAK PLPOL PMSPM PNPCN PRPRI',
+    'PSPSE PTPRT PWPLW PYPRY QAQAT REREU ROROU RSSRB RURUS RWRWA SASAU SBSLB SCSYC SDSDN',
+    'SESWE SGSGP SHSHN SISVN SJSJM SKSVK SLSLE SMSMR SNSEN SOSOM SRSUR SSSSD STSTP SVSLV',
+    'SXSXM SYSYR SZSWZ TCTCA TDTCD TFATF TGTGO THTHA TJTJK TKTKL TLTLS TMTKM TNTUN TOTON',
+    'TRTUR TTTTO TVTUV TWTWN TZTZA UAUKR UGUGA UMUMI USUSA UYURY UZUZB VAVAT VCVCT VEVEN',
+    'VGVGB VIVIR VNVNM VUVUT WFWLF WSWSM YEYEM YTMYT ZAZAF ZMZMB ZWZWE'
+  ].join(' ').split(' ')).map(item => [item.slice(0, 2), item.slice(2)]));
+  const countries = new Map();
+  for (const [code, alpha3] of countryCodes) {
+    countries.set(code.toLowerCase(), code);
+    countries.set(alpha3.toLowerCase(), code);
+    countries.set(regionNames.of(code).toLowerCase(), code);
   }
+  // Common FxTwitter labels that differ from CLDR English country names.
+  for (const [name, code] of Object.entries({
+    'united states of america': 'US', 'uk': 'GB', 'korea': 'KR',
+    'south korea': 'KR', 'north korea': 'KP', 'republic of korea': 'KR',
+    'czech republic': 'CZ', 'turkey': 'TR', 'ivory coast': 'CI',
+    'democratic republic of the congo': 'CD', 'dr congo': 'CD',
+    'republic of the congo': 'CG', 'vatican city': 'VA',
+    'palestine': 'PS', 'hong kong': 'HK', 'macao': 'MO', 'macau': 'MO'
+  })) countries.set(name, code);
+
+  // CLDR territory-containment region identifiers (including groupings).
+  // Intl.DisplayNames provides the CLDR English names, not a second
+  // manually maintained region-name table.
+  const regionCodes = new Map();
+  for (const code of ('001 002 003 005 009 011 013 014 015 017 018 019 ' +
+    '021 029 030 034 035 039 053 054 057 061 142 143 145 150 ' +
+    '151 154 155 202 419 EU EZ QO UN').split(' ')) {
+    const name = regionNames.of(code);
+    if (name !== code) regionCodes.set(name.toLowerCase(), code);
+    regionCodes.set(code.toLowerCase(), code);
+  }
+  // Common region spellings from X differ from CLDR's formal names.
+  for (const [name, code] of Object.entries({
+    'east asia': '030', 'southeast asia': '035', 'south east asia': '035',
+    'south-eastern asia': '035',
+    'south asia': '034', 'west asia': '145', 'central asia': '143',
+    'north america': '021', 'south america': '005',
+    'east africa': '014', 'west africa': '011', 'north africa': '015',
+    'central africa': '017',
+    'north europe': '154', 'south europe': '039',
+    'east europe': '151', 'west europe': '155',
+    'latin america and the caribbean': '419'
+  })) regionCodes.set(name, code);
+  // Only presentation abbreviations are curated; identification uses CLDR.
+  const regionAbbreviations = {
+    '005': 'S America', '011': 'W Africa', '013': 'C America',
+    '014': 'E Africa', '015': 'N Africa', '017': 'C Africa',
+    '018': 'S Africa', '021': 'N America', '030': 'E Asia',
+    '034': 'S Asia', '035': 'SE Asia', '039': 'S Europe',
+    '143': 'C Asia', '145': 'W Asia', '151': 'E Europe',
+    '154': 'N Europe', '155': 'W Europe', '202': 'SSA',
+    '419': 'LATAM'
+  };
+  const otherAbbreviations = { 'middle east': 'M East', 'central europe': 'C Europe' };
 
   let scanTimer = null;
   let retryTimer = null;
   let retryAt = 0;
 
-  function flagFor(country) {
-    if (typeof country !== 'string') return null;
-    const value = country.trim().toLowerCase();
-    const code = codes.get(value) || (/^[a-z]{2}$/.test(value) ? value.toUpperCase() : null);
-    if (!code || !/^[A-Z]{2}$/.test(code)) return null;
-    return String.fromCodePoint(...[...code].map(c => 127397 + c.charCodeAt(0)));
+  function locationLabel(location) {
+    if (!location) return '';
+    const key = location.toLowerCase();
+    const code = countries.get(key);
+    if (code) {
+      const flag = String.fromCodePoint(...[...code].map(c => 127397 + c.charCodeAt(0)));
+      return flag + ' ' + countryCodes.get(code);
+    }
+    const region = regionCodes.get(key);
+    if (region) return regionAbbreviations[region] || regionNames.of(region);
+    return otherAbbreviations[key] || location;
   }
 
   function findHandles(root = document) {
@@ -141,14 +205,12 @@
     }
 
     const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
-    const flag = flagFor(location);
-    const display = flag || location;
+    const display = locationLabel(location);
     if (badge.textContent !== display) badge.textContent = display;
-    const isRegion = !!display && !flag;
-    badge.style.fontSize = isRegion ? '0.75rem' : '1rem';
-    badge.style.paddingInline = isRegion ? '0.35rem' : '0';
-    badge.style.backgroundColor = isRegion ? '#f5f5f5' : 'transparent';
-    badge.style.color = isRegion ? '#171717' : 'inherit';
+    badge.style.fontSize = '0.75rem';
+    badge.style.paddingInline = display ? '0.35rem' : '0';
+    badge.style.backgroundColor = display ? '#f5f5f5' : 'transparent';
+    badge.style.color = display ? '#171717' : 'inherit';
     badge.style.borderRadius = '0';
 
     const pending = loading && !display;

@@ -280,15 +280,15 @@ function contentFixture(options = {}) {
 
 test('only visible account headers are looked up, not offscreen entries', async () => {
   const f = contentFixture();
-  await waitFor(() => f.badge(0)?.textContent === '🇯🇵' &&
-    f.badge(1)?.textContent === '🇯🇵');
+  await waitFor(() => f.badge(0)?.textContent === '🇯🇵 JPN' &&
+    f.badge(1)?.textContent === '🇯🇵 JPN');
   assert.deepEqual(f.calls.map(c => c.username).sort(), ['alice','bob']);
   assert.equal(f.badge(2).textContent, '');
 });
 
-test('flag occupies a fixed-width slot immediately BEFORE display-name link', async () => {
+test('country chip occupies a fixed-width slot immediately BEFORE display-name link', async () => {
   const f = contentFixture();
-  await waitFor(() => f.badge(0)?.textContent === '🇯🇵');
+  await waitFor(() => f.badge(0)?.textContent === '🇯🇵 JPN');
   const [badge, name] = f.rows[0].children;
   assert.equal(name, f.links[0]);
   assert.equal(f.badge(0), badge);
@@ -296,14 +296,14 @@ test('flag occupies a fixed-width slot immediately BEFORE display-name link', as
   assert.equal(f.rows[0].style.alignItems, 'center');
   assert.equal(badge.style.width, '5.5rem');
   assert.equal(badge.style.flex, '0 0 5.5rem');
-  assert.equal(badge.style.backgroundColor, 'transparent');
-  assert.equal(badge.style.paddingInline, '0');
+  assert.equal(badge.style.backgroundColor, '#f5f5f5');
+  assert.equal(badge.style.paddingInline, '0.35rem');
   assert.equal(name.textContent, 'Alice');
 });
 
 test('broad geographical regions have square light-background chips', async () => {
   const f = contentFixture({ locations: { alice: 'East Asia', bob: 'Europe' } });
-  await waitFor(() => f.badge(0)?.textContent === 'East Asia' &&
+  await waitFor(() => f.badge(0)?.textContent === 'E Asia' &&
     f.badge(1)?.textContent === 'Europe');
   const badge = f.badge(0);
   assert.equal(badge.style.backgroundColor, '#f5f5f5');
@@ -317,6 +317,55 @@ test('broad geographical regions have square light-background chips', async () =
   assert.equal(badge.title, 'Account based in East Asia (according to X)');
 });
 
+test('ISO alpha-3 chips resolve country names, aliases and alpha-2/3 codes', async () => {
+  const cases = [
+    ['Japan', '🇯🇵 JPN'], ['JP', '🇯🇵 JPN'], ['JPN', '🇯🇵 JPN'],
+    ['United States of America', '🇺🇸 USA'], ['USA', '🇺🇸 USA'],
+    ['UK', '🇬🇧 GBR'], ['United Kingdom', '🇬🇧 GBR'],
+    ['South Korea', '🇰🇷 KOR'], ['Czech Republic', '🇨🇿 CZE'],
+    ['Ivory Coast', '🇨🇮 CIV'], ['South Africa', '🇿🇦 ZAF'],
+    ['Hong Kong', '🇭🇰 HKG'], ['Palestine', '🇵🇸 PSE']
+  ];
+  const f = contentFixture({
+    accounts: cases.map((_, i) => ({ handle: 'Country' + i, name: 'Country ' + i })),
+    locations: Object.fromEntries(cases.map(([location], i) => ['country' + i, location]))
+  });
+  await waitFor(() => cases.every(([, label], i) => f.badge(i)?.style.backgroundImage === 'none'));
+  assert.deepEqual(cases.map((_, i) => f.badge(i)?.textContent),
+    cases.map(([, label]) => label));
+  for (const [i, [location, label]] of cases.entries()) {
+    const badge = f.badge(i);
+    assert.equal(badge.textContent, label);
+    assert.equal(badge.style.backgroundColor, '#f5f5f5');
+    assert.equal(badge.style.paddingInline, '0.35rem');
+    assert.equal(badge.title, 'Account based in ' + location + ' (according to X)');
+  }
+});
+
+test('CLDR region identifiers and variant names use curated abbreviations', async () => {
+  const cases = [
+    ['East Asia', 'E Asia'], ['Eastern Asia', 'E Asia'], ['030', 'E Asia'],
+    ['Southeast Asia', 'SE Asia'], ['South-eastern Asia', 'SE Asia'],
+    ['035', 'SE Asia'], ['Northern Europe', 'N Europe'],
+    ['Latin America', 'LATAM'], ['419', 'LATAM'],
+    ['Sub-Saharan Africa', 'SSA'], ['202', 'SSA'],
+    ['Middle East', 'M East'], ['Central Europe', 'C Europe'],
+    ['Europe', 'Europe'], ['EU', 'European Union'],
+    ['Atlantis', 'Atlantis'], ['XK', 'XK']
+  ];
+  const f = contentFixture({
+    accounts: cases.map((_, i) => ({ handle: 'Region' + i, name: 'Region ' + i })),
+    locations: Object.fromEntries(cases.map(([location], i) => ['region' + i, location]))
+  });
+  await waitFor(() => cases.every(([, label], i) => f.badge(i)?.style.backgroundImage === 'none'));
+  assert.deepEqual(cases.map((_, i) => f.badge(i)?.textContent),
+    cases.map(([, label]) => label));
+  for (const [i, [location, label]] of cases.entries()) {
+    assert.equal(f.badge(i).textContent, label);
+    assert.equal(f.badge(i).title, 'Account based in ' + location + ' (according to X)');
+  }
+});
+
 test('the fixed-width placeholder precedes the name without layout shift', async () => {
   let finish;
   const pending = new Promise(resolve => { finish = resolve; });
@@ -328,7 +377,7 @@ test('the fixed-width placeholder precedes the name without layout shift', async
   assert.equal(slot.style.width, '5.5rem');
   assert.match(slot.style.backgroundImage, /linear-gradient/);
   finish({ success: true, country: 'East Asia' });
-  await waitFor(() => slot.textContent === 'East Asia');
+  await waitFor(() => slot.textContent === 'E Asia');
   assert.equal(f.rows[0].children[0], slot);
   assert.equal(slot.style.width, '5.5rem');
   assert.equal(slot.style.backgroundImage, 'none');
@@ -356,7 +405,7 @@ test('empty and failed lookups leave a blank reserved slot', async () => {
 
 test('rescans reuse existing slot rather than duplicating it', async () => {
   const f = contentFixture({ locations: { alice: 'East Asia' } });
-  await waitFor(() => f.badge(0)?.textContent === 'East Asia');
+  await waitFor(() => f.badge(0)?.textContent === 'E Asia');
   const slot = f.badge(0);
   f.listeners.get('scroll')();
   await new Promise(resolve => setTimeout(resolve, 120));
@@ -378,8 +427,8 @@ test('UserCell puts account badge before display name and keeps bio mentions inl
       ka_xa_: 'East Asia'
     }
   });
-  await waitFor(() => f.badge(0)?.textContent === '🇯🇵' &&
-    f.bioRows[0][2].row.children[1]?.textContent === 'East Asia');
+  await waitFor(() => f.badge(0)?.textContent === '🇯🇵 JPN' &&
+    f.bioRows[0][2].row.children[1]?.textContent === 'E Asia');
   assert.deepEqual(f.calls.map(call => call.username).sort(),
     ['ayatsunoyuni', 'stellive_kr', 'rainydayinabi', 'ka_xa_'].sort());
   assert.equal(f.rows[0].children[0], f.badge(0));

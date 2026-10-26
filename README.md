@@ -1,10 +1,12 @@
 # X Account Location Flags for Firefox
 
 A small Firefox extension that displays X's **Account based in** metadata
-before display names in timelines, replies and user lists. Countries appear as flags;
-larger geographic regions (for example, East Asia) appear as square, light chips on
-the same line as the handle and timestamp. A subtle fixed-width placeholder
-reserves space before FxTwitter responds, preventing timestamp shifts. Data comes from
+before display names in timelines, replies and user lists. Countries and
+territories appear as a flag (when supported by the system) and an ISO 3166-1
+alpha-3 code (for example, 🇯🇵 JPN). Geographic regions have short labels (for
+example, SE Asia or LATAM). Both use square, light chips on the same line as the
+handle and timestamp. A fixed-width placeholder prevents layout shifts before
+FxTwitter responds. Data comes from
 [FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/).
 It does not prove a person's real-world location.
 
@@ -18,7 +20,7 @@ For permanent installation in standard Firefox, package and sign the extension.
 
 ## Design
 
-- **`content.js`** identifies handles and displays flags or region names as
+- **`content.js`** identifies handles and displays country codes or region labels as
   separate flex-row siblings before X's display-name anchor (never inside its link).
   UserCell card biographies retain inline location annotations for their @mentions.
   It only looks up accounts
@@ -42,8 +44,12 @@ Looking up an account sends its public handle to FxTwitter, alongside normal
 HTTP request metadata such as your network IP. No other account information,
 X cookies, or X authorization headers are transmitted. FxTwitter is an
 independent service, and its availability and accuracy depend on both FxTwitter
-and X. Unknown location values are displayed as text rather than being
-silently dropped or misrepresented as country flags.
+and X. Country identifiers follow [ISO 3166-1](https://www.iso.org/iso-3166-country-codes.html),
+using the [iso-codes dataset](https://salsa.debian.org/iso-codes-team/iso-codes).
+Region identifiers and English names follow [Unicode CLDR](https://cldr.unicode.org/)
+via `Intl.DisplayNames`; a small set of display abbreviations is curated locally.
+Non-ISO territories and unrecognized location values remain as text rather than
+being assigned invented alpha-3 codes or misleading country flags.
 
 ## Test
 

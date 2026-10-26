@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "X Account Location Flags",
-  "version": "0.2.0",
-  "description": "Show X Account based in flags using FxTwitter public metadata.",
+  "version": "0.3.0",
+  "description": "Show X account countries and regions using FxTwitter public metadata.",
   "browser_specific_settings": {
     "gecko": {
       "id": "x-account-location-flags@perennialtech",
