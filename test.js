@@ -434,7 +434,7 @@ test('UserCell puts account badge before display name and keeps bio mentions inl
     }
   });
   await waitFor(() => f.badge(0)?.textContent === '🇯🇵 JPN' &&
-    f.bioRows[0][2].link.nextElementSibling?.textContent === 'E Asia');
+    f.bioRows[0][2].link.previousElementSibling?.textContent === 'E Asia');
   assert.deepEqual(f.calls.map(call => call.username).sort(),
     ['ayatsunoyuni', 'stellive_kr', 'rainydayinabi', 'ka_xa_'].sort());
   assert.equal(f.rows[0].children[0], f.badge(0));
@@ -447,11 +447,11 @@ test('UserCell puts account badge before display name and keeps bio mentions inl
     assert.equal(mention.row.children.length, 1,
       'do not insert badge beside the inline mention wrapper');
     assert.equal(mention.row.insertions, 0);
-    assert.equal(mention.row.children[0].children[0], mention.link);
+    assert.equal(mention.row.children[0].children[1], mention.link);
     assert.equal(mention.row.children[0].children.length, 2);
-    assert.equal(mention.row.children[0].children[1].dataset.xAccountFlag, 'true');
+    assert.equal(mention.row.children[0].children[0].dataset.xAccountFlag, 'true');
   }
-  const label = mentions[2].link.nextElementSibling;
+  const label = mentions[2].link.previousElementSibling;
   assert.equal(label.style.backgroundColor, '#f5f5f5');
   assert.equal(label.style.color, '#171717');
   assert.equal(label.style.paddingInline, '0.35rem');
@@ -460,26 +460,42 @@ test('UserCell puts account badge before display name and keeps bio mentions inl
     'do not override inline bio layout');
 });
 
-test('UserCell bio location remains inline after @mention across rescans', async () => {
+test('UserCell bio location remains inline before @mention across rescans', async () => {
   const f = contentFixture({
     accounts: [{ type: 'UserCell', handle: 'DrLoupis',
       name: 'Dr. Anastasia Maria Loupis', bio: ['DrLoupis__'] }],
     locations: { drloupis: 'United States', drloupis__: 'United States' }
   });
   await waitFor(() => f.badge(0)?.textContent === '🇺🇸 USA' &&
-    f.bioRows[0][0].link.nextElementSibling?.textContent === '🇺🇸 USA');
+    f.bioRows[0][0].link.previousElementSibling?.textContent === '🇺🇸 USA');
   const mention = f.bioRows[0][0];
-  const chip = mention.link.nextElementSibling;
+  const chip = mention.link.previousElementSibling;
   assert.equal(mention.row.children.length, 1);
-  assert.equal(mention.row.children[0].children[0], mention.link);
-  assert.equal(mention.row.children[0].children[1], chip);
+  assert.equal(mention.row.children[0].children[0], chip);
+  assert.equal(mention.row.children[0].children[1], mention.link);
+  assert.equal(chip.style.marginInlineEnd, '0.35rem');
+  assert.equal(chip.style.marginInlineStart, '0');
   assert.equal(mention.row.insertions, 0);
   f.listeners.get('scroll')();
   await new Promise(resolve => setTimeout(resolve, 120));
-  assert.equal(mention.link.nextElementSibling, chip);
+  assert.equal(mention.link.previousElementSibling, chip);
   assert.equal(mention.row.children.length, 1);
   assert.equal(mention.row.children[0].children.length, 2);
+  assert.equal(mention.row.children[0].insertions, 1);
   assert.equal(mention.row.insertions, 0);
+
+  // A chip inserted by an older version after the link must be moved, not duplicated.
+  const wrapper = mention.row.children[0];
+  wrapper.insertBefore(chip, null);
+  chip.style.marginInlineStart = '0.35rem';
+  chip.style.marginInlineEnd = '0';
+  f.listeners.get('scroll')();
+  await new Promise(resolve => setTimeout(resolve, 120));
+  assert.equal(wrapper.children.length, 2);
+  assert.equal(wrapper.children[0], chip);
+  assert.equal(wrapper.children[1], mention.link);
+  assert.equal(chip.style.marginInlineStart, '0');
+  assert.equal(chip.style.marginInlineEnd, '0.35rem');
 });
 
 test('quoted-post header with plain-text name and tabindex handle renders location', async () => {
@@ -515,7 +531,7 @@ test('UserCell account, mentions and quoted header remain distinct', async () =>
   });
   await waitFor(() => f.badge(0)?.textContent === '🇺🇸 USA' &&
     f.badge(1)?.textContent === '🇺🇸 USA' &&
-    f.bioRows[0].every(mention => mention.link.nextElementSibling?.textContent === '🇺🇸 USA'));
+    f.bioRows[0].every(mention => mention.link.previousElementSibling?.textContent === '🇺🇸 USA'));
   assert.deepEqual(f.calls.map(call => call.username).sort(),
     ['peterj_walker', 'openrouter', 'cartainc'].sort());
   assert.equal(f.rows[0].children.length, 2);
@@ -556,7 +572,7 @@ test('bio-only containers without account identity are not looked up', async () 
     accounts: [{ type: 'UserCell', handle: 'NoName', name: '',
       bio: ['OtherAccount'] }]
   });
-  await waitFor(() => f.bioRows[0][0].link.nextElementSibling?.textContent === '🇯🇵 JPN');
+  await waitFor(() => f.bioRows[0][0].link.previousElementSibling?.textContent === '🇯🇵 JPN');
   assert.deepEqual(f.calls.map(call => call.username), ['otheraccount']);
   assert.equal(f.rows[0].children.length, 1, 'no account identity badge');
 });

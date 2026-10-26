@@ -198,25 +198,22 @@
       badge.style.display = 'inline-block';
       badge.style.boxSizing = 'border-box';
       badge.style.flex = '0 0 auto';
-      badge.style.marginInlineEnd = placement === 'header' ? '0.35rem' : '0';
-      badge.style.marginInlineStart = placement === 'mention' ? '0.35rem' : '0';
       badge.style.whiteSpace = 'nowrap';
       badge.style.alignSelf = 'center';
       badge.style.verticalAlign = 'middle';
       badge.style.lineHeight = '1.25rem';
       badge.style.height = '1.25rem';
     }
+    badge.style.marginInlineEnd = '0.35rem';
+    badge.style.marginInlineStart = '0';
     if (placement === 'header') {
       // X's inner display-name wrapper defaults to a flex column.
       // Preserve React's anchor but lay its siblings out horizontally.
       row.style.flexDirection = 'row';
       row.style.alignItems = 'center';
     }
-    const next = placement === 'header' ? link : link.nextSibling;
-    if (badge.parentElement !== row ||
-        (placement === 'header' ? badge.nextElementSibling !== link :
-          badge.previousElementSibling !== link)) {
-      row.insertBefore(badge, next);
+    if (badge.parentElement !== row || badge.nextElementSibling !== link) {
+      row.insertBefore(badge, link);
     }
 
     if (badge.textContent !== display) badge.textContent = display;
