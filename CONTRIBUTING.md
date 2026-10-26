@@ -11,8 +11,8 @@ node --test test.js
 ```
 
 The tests mock FxTwitter and X's DOM. Also [load the extension temporarily in
-Firefox](README.md#install-temporarily) and check that location chips display in
-posts and user lists before distributing changes.
+Firefox](README.md#install-temporarily-for-development) and check that location
+chips display in posts and user lists before distributing changes.
 
 ## Distribution
 
