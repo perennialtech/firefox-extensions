@@ -205,7 +205,7 @@
       badge.style.height = '1.25rem';
     }
     badge.style.marginInlineEnd = '0.35rem';
-    badge.style.marginInlineStart = '0';
+    badge.style.marginInlineStart = placement === 'mention' ? '0.25rem' : '0';
     if (placement === 'header') {
       // X's inner display-name wrapper defaults to a flex column.
       // Preserve React's anchor but lay its siblings out horizontally.

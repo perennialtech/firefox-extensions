@@ -305,6 +305,7 @@ test('chip takes its intrinsic width immediately BEFORE display-name link', asyn
   assert.equal(f.badge(0), badge);
   assert.equal(f.rows[0].style.flexDirection, 'row');
   assert.equal(f.rows[0].style.alignItems, 'center');
+  assert.equal(badge.style.marginInlineStart, '0');
   assert.equal(badge.style.width, undefined);
   assert.equal(badge.style.minWidth, undefined);
   assert.equal(badge.style.maxWidth, undefined);
@@ -456,6 +457,7 @@ test('UserCell puts account badge before display name and keeps bio mentions inl
   assert.equal(label.style.color, '#171717');
   assert.equal(label.style.paddingInline, '0.35rem');
   assert.equal(label.style.borderRadius, '0');
+  assert.equal(label.style.marginInlineStart, '0.25rem');
   assert.equal(mentions[2].row.style.flexDirection, undefined,
     'do not override inline bio layout');
 });
@@ -474,7 +476,7 @@ test('UserCell bio location remains inline before @mention across rescans', asyn
   assert.equal(mention.row.children[0].children[0], chip);
   assert.equal(mention.row.children[0].children[1], mention.link);
   assert.equal(chip.style.marginInlineEnd, '0.35rem');
-  assert.equal(chip.style.marginInlineStart, '0');
+  assert.equal(chip.style.marginInlineStart, '0.25rem');
   assert.equal(mention.row.insertions, 0);
   f.listeners.get('scroll')();
   await new Promise(resolve => setTimeout(resolve, 120));
@@ -494,7 +496,7 @@ test('UserCell bio location remains inline before @mention across rescans', asyn
   assert.equal(wrapper.children.length, 2);
   assert.equal(wrapper.children[0], chip);
   assert.equal(wrapper.children[1], mention.link);
-  assert.equal(chip.style.marginInlineStart, '0');
+  assert.equal(chip.style.marginInlineStart, '0.25rem');
   assert.equal(chip.style.marginInlineEnd, '0.35rem');
 });
 
