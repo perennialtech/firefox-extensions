@@ -46,7 +46,8 @@
     'czech republic': 'CZ', 'turkey': 'TR', 'ivory coast': 'CI',
     'democratic republic of the congo': 'CD', 'dr congo': 'CD',
     'republic of the congo': 'CG', 'vatican city': 'VA',
-    'palestine': 'PS', 'hong kong': 'HK', 'macao': 'MO', 'macau': 'MO'
+    'palestine': 'PS', 'hong kong': 'HK', 'macao': 'MO', 'macau': 'MO',
+    'viet nam': 'VN', 'bosnia and herzegovina': 'BA'
   })) countries.set(name, code);
 
   // CLDR territory-containment region identifiers (including groupings).

@@ -338,6 +338,9 @@ test('ISO alpha-3 chips resolve country names, aliases and alpha-2/3 codes', asy
     ['UK', '🇬🇧 GBR'], ['United Kingdom', '🇬🇧 GBR'],
     ['South Korea', '🇰🇷 KOR'], ['Czech Republic', '🇨🇿 CZE'],
     ['Ivory Coast', '🇨🇮 CIV'], ['South Africa', '🇿🇦 ZAF'],
+    ['Viet Nam', '🇻🇳 VNM'], ['Vietnam', '🇻🇳 VNM'],
+    ['Bosnia and Herzegovina', '🇧🇦 BIH'],
+    ['Bosnia & Herzegovina', '🇧🇦 BIH'],
     ['Hong Kong', '🇭🇰 HKG'], ['Palestine', '🇵🇸 PSE']
   ];
   const f = contentFixture({
