@@ -4,16 +4,15 @@ on:
   push:
     tags: ['v*']
 
-permissions:
-  contents: write
-
 jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
       - name: Verify version and test
@@ -27,7 +26,7 @@ jobs:
           mkdir addon
           cp manifest.json background.js content.js addon/
       - name: Lint extension
-        run: npx --yes web-ext@10.8.0 lint --source-dir addon
+        run: npx --yes web-ext@10.8.0 lint --self-hosted --source-dir addon
       - name: Sign for self-distribution
         env:
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
@@ -42,3 +41,45 @@ jobs:
           test "${#packages[@]}" -eq 1
           gh release create "$GITHUB_REF_NAME" "${packages[0]}" \
             --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+      - name: Generate Firefox update manifest
+        run: |
+          mkdir site
+          node --input-type=module - <<'JS'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+
+          const manifest = JSON.parse(readFileSync('manifest.json', 'utf8'));
+          const files = readdirSync('signed').filter(name => name.endsWith('.xpi'));
+          if (files.length !== 1) throw new Error('Expected exactly one signed XPI');
+          const file = files[0];
+          const hash = createHash('sha256').update(readFileSync(`signed/${file}`)).digest('hex');
+          const update = {
+            addons: {
+              [manifest.browser_specific_settings.gecko.id]: {
+                updates: [{
+                  version: manifest.version,
+                  update_link: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.GITHUB_REF_NAME}/${encodeURIComponent(file)}`,
+                  update_hash: `sha256:${hash}`
+                }]
+              }
+            }
+          };
+          writeFileSync('site/updates.json', JSON.stringify(update, null, 2) + '\n');
+          JS
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+    steps:
+      - name: Deploy update manifest
+        id: pages
+        uses: actions/deploy-pages@v4

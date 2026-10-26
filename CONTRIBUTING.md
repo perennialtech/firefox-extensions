@@ -18,7 +18,8 @@ posts and user lists before distributing changes.
 
 The [release workflow](.github/workflows/release.yml) tests the extension,
 submits it to Mozilla for [unlisted signing](https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/),
-and attaches the signed `.xpi` to a GitHub release.
+attaches the signed `.xpi` to a GitHub release, and deploys a Firefox update
+manifest to GitHub Pages. Only completed, signed releases are advertised.
 
 Configure the GitHub Actions secrets `AMO_JWT_ISSUER` and `AMO_JWT_SECRET`
 using [Mozilla API credentials](https://addons.mozilla.org/developers/addon/api/key/).

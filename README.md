@@ -11,14 +11,16 @@ and **do not establish where a person actually lives or is currently located**.
 
 ## Install
 
-You need Firefox 140 or newer and access to this private GitHub repository.
+You need Firefox 140 or newer.
 
 1. Download the signed `.xpi` from the [latest GitHub release](https://github.com/perennialtech/x-account-location-flags-firefox/releases/latest).
 2. Open `about:addons` in Firefox, select the gear menu, and choose **Install Add-on From File**.
 3. Select the downloaded `.xpi`, then open or refresh [X](https://x.com/).
 
-The signed extension stays installed after Firefox restarts. Install newer
-releases manually; automatic updates are not configured.
+The signed extension stays installed after Firefox restarts. Starting with
+version 0.2.0, Firefox can update it automatically from GitHub Releases using
+the [update manifest](https://perennialtech.github.io/x-account-location-flags-firefox/updates.json).
+If you installed an earlier version, install 0.2.0 manually once to enable updates.
 
 ## Install temporarily for development
 
