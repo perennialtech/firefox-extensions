@@ -1,65 +1,48 @@
 # X Account Location Flags for Firefox
 
-A small Firefox extension that displays X's **Account based in** metadata
-before display names in timelines, replies and user lists. Countries and
-territories appear as a flag (when supported by the system) and an ISO 3166-1
-alpha-3 code (for example, 🇯🇵 JPN). Geographic regions have short labels (for
-example, SE Asia or LATAM). Both use square, content-sized light chips inline
-with the account name, including user lists and quoted posts. No placeholder is
-shown while the location is loading. Data comes from
-[FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/).
-It does not prove a person's real-world location.
+A Firefox extension that shows X's **Account based in** metadata before account
+names in posts, replies and user lists (including quoted posts). Countries and
+territories appear with a flag, when supported by the system, and an ISO 3166-1
+alpha-3 code (such as 🇯🇵 JPN); geographic regions use short labels (such as
+SE Asia or LATAM). Southern Asia and its countries use pale red chips.
 
-Southern Asia (`S Asia`) and its nine constituent countries under the UN M49
-classification use Tailwind `red-100` backgrounds and `red-900` text, instead
-of the neutral chip colours used elsewhere.
+Locations come from [FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/)
+and **do not establish where a person actually lives or is currently located**.
 
 ## Install temporarily
 
-1. Open `about:debugging#/runtime/this-firefox` in Firefox 128 or newer.
-2. Choose **Load Temporary Add-on** and select `manifest.json`.
-3. Open https://x.com/ and refresh the page.
+You need Firefox 128 or newer and access to this private GitHub repository.
 
-For permanent installation in standard Firefox, package and sign the extension.
+1. From the [repository](https://github.com/perennialtech/x-account-location-flags-firefox), select **Code → Download ZIP** and extract it.
+2. In Firefox, open `about:debugging#/runtime/this-firefox`.
+3. Select **Load Temporary Add-on** and choose `manifest.json` in the extracted folder.
+4. Open or refresh [X](https://x.com/). Accounts with available location metadata
+   should show a chip before their display name; the first lookup can take a moment.
 
-## Design
+Temporary extensions are removed when Firefox restarts. For permanent use in
+standard Firefox, the extension must be packaged and [signed by Mozilla](https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/).
+This repository does not provide a signed installable package.
 
-- **`content.js`** identifies handles and displays country codes or region labels
-  before X's display names (without changing profile links). Quoted posts with
-  text-only name/handle elements are supported. UserCell card biographies retain
-  inline location annotations for their @mentions. It prefetches DOM-mounted
-  accounts, prioritizing visible rows and pointer/keyboard focus. Cached flags
-  are rendered immediately. It makes no HTTP requests itself.
-- **`background.js`** requests
-  `GET https://api.fxtwitter.com/2/profile/{handle}/about` using the Firefox
-  host permission. It does not call X, intercept X requests, read X cookies,
-  or access X credentials. The background script validates handles and
-  deduplicates overlapping lookups across tabs.
-- All metadata is stored in Firefox's local extension storage only. Known
-  locations expire after 14 days; successful responses with no location after
-  12 hours. Network errors aren't persisted. FxTwitter 429 responses pause
-  outgoing requests, respecting `Retry-After` where provided.
-- Calls are limited to four concurrent requests, started at least 200 ms apart.
-  The extension neither requires an X login nor sends credentials to FxTwitter.
+## Troubleshooting
+
+- **No chips appear:** Check that the add-on is loaded in `about:debugging`,
+  then refresh X. Individual accounts may have no location metadata.
+- **Chips are delayed or missing for many accounts:** Lookups depend on FxTwitter.
+  If it is unavailable or rate-limiting requests, try again later.
 
 ## Privacy and limitations
 
-Looking up an account sends its public handle to FxTwitter, alongside normal
-HTTP request metadata such as your network IP. No other account information,
-X cookies, or X authorization headers are transmitted. FxTwitter is an
-independent service, and its availability and accuracy depend on both FxTwitter
-and X. Country identifiers follow [ISO 3166-1](https://www.iso.org/iso-3166-country-codes.html),
-using the [iso-codes dataset](https://salsa.debian.org/iso-codes-team/iso-codes).
-Country names accept ISO and CLDR English spellings, common X variants, and
-typographic differences in accents, apostrophes, ampersands and whitespace.
-Region identifiers and English names follow [Unicode CLDR](https://cldr.unicode.org/)
-via `Intl.DisplayNames`; a small set of display abbreviations is curated locally.
-Non-ISO territories and unrecognized location values remain as text rather than
-being assigned invented alpha-3 codes or misleading country flags.
+Looking up an account sends its public handle to FxTwitter, along with normal
+request metadata such as your IP address. The extension does not send X cookies,
+credentials or authorization headers to FxTwitter, and does not require an X
+login of its own. Lookup results are cached in Firefox's local extension storage.
 
-## Test
+Country names and codes use [ISO 3166-1](https://www.iso.org/iso-3166-country-codes.html)
+and English names from [Unicode CLDR](https://cldr.unicode.org/), with common
+name variants supported. Unrecognized locations remain as text instead of being
+assigned an invented country flag or code. The accuracy and availability of
+reported locations depend on X and FxTwitter.
 
-`node --check background.js && node --check content.js && node --test test.js`
+## Contributing
 
-These tests exercise the background and content scripts against a mocked
-FxTwitter API and DOM. They do not substitute for manually testing in Firefox.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for testing and distribution guidance.
