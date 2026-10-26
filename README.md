@@ -4,9 +4,9 @@ A small Firefox extension that displays X's **Account based in** metadata
 before display names in timelines, replies and user lists. Countries and
 territories appear as a flag (when supported by the system) and an ISO 3166-1
 alpha-3 code (for example, 🇯🇵 JPN). Geographic regions have short labels (for
-example, SE Asia or LATAM). Both use square, light chips on the same line as the
-handle and timestamp. A fixed-width placeholder prevents layout shifts before
-FxTwitter responds. Data comes from
+example, SE Asia or LATAM). Both use square, content-sized light chips inline
+with the account name, including user lists and quoted posts. No placeholder is
+shown while the location is loading. Data comes from
 [FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/).
 It does not prove a person's real-world location.
 
@@ -20,12 +20,12 @@ For permanent installation in standard Firefox, package and sign the extension.
 
 ## Design
 
-- **`content.js`** identifies handles and displays country codes or region labels as
-  separate flex-row siblings before X's display-name anchor (never inside its link).
-  UserCell card biographies retain inline location annotations for their @mentions.
-  It only looks up accounts
-  presently visible on the page, giving pointer/keyboard focus priority. Cached
-  flags are rendered immediately. It makes no HTTP requests itself.
+- **`content.js`** identifies handles and displays country codes or region labels
+  before X's display names (without changing profile links). Quoted posts with
+  text-only name/handle elements are supported. UserCell card biographies retain
+  inline location annotations for their @mentions. It prefetches DOM-mounted
+  accounts, prioritizing visible rows and pointer/keyboard focus. Cached flags
+  are rendered immediately. It makes no HTTP requests itself.
 - **`background.js`** requests
   `GET https://api.fxtwitter.com/2/profile/{handle}/about` using the Firefox
   host permission. It does not call X, intercept X requests, read X cookies,

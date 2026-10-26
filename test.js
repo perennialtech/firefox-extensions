@@ -122,8 +122,8 @@ test('HTTP 429 pauses the service and persists cooldown across background restar
 });
 
 
-// Layout fixture mirrors the two supplied X structures: a tweet's User-Name
-// block and a UserCell with avatar, display name, @handle, Follow and bio links.
+// Layout fixture mirrors X's regular User-Name, quoted-post User-Name
+// (plain name/handle without links), and UserCell account and biography DOM.
 function contentFixture(options = {}) {
   const calls = [], listeners = new Map(), badges = new Map();
   const accounts = options.accounts || [
@@ -164,12 +164,13 @@ function contentFixture(options = {}) {
 
   for (const acct of accounts) {
     const display = element({
-      attrs: { href: '/' + acct.handle, role: 'link' },
+      attrs: acct.quoted ? { dir: 'ltr' } : { href: '/' + acct.handle, role: 'link' },
       textContent: acct.name,
       getBoundingClientRect: () => bounds(acct)
     });
     const handle = element({
-      attrs: { href: '/' + acct.handle, role: 'link', tabindex: '-1' },
+      attrs: acct.quoted ? { tabindex: '-1' } :
+        { href: '/' + acct.handle, role: 'link', tabindex: '-1' },
       textContent: '@' + acct.handle
     });
     const avatar = element({
@@ -216,7 +217,7 @@ function contentFixture(options = {}) {
     });
     const bioLinks = mentions.map(item => item.link);
     bioRows.push(mentions);
-    const allLinks = [avatar, display, handle, ...bioLinks];
+    const allLinks = acct.quoted ? [] : [avatar, display, handle, ...bioLinks];
     const container = {
       type: acct.type,
       getAttribute(name) {
@@ -226,6 +227,10 @@ function contentFixture(options = {}) {
       querySelectorAll(selector) {
         if (selector === 'a[href]') return allLinks;
         if (selector === 'div[dir="auto"] a[href]') return bioLinks;
+        if (selector === '[tabindex="-1"]') return acct.quoted ? [handle] : [];
+        if (selector === 'div[dir="ltr"]') return acct.quoted
+          ? [display, element({ textContent: '@' + acct.handle }),
+            element({ textContent: '9h' })] : [];
         if (selector === '[data-x-account-flag]') {
           return [
             ...row.children.filter(x => x.dataset?.xAccountFlag === 'true'),
@@ -278,15 +283,15 @@ function contentFixture(options = {}) {
     badges, badge, bioRows };
 }
 
-test('only visible account headers are looked up, not offscreen entries', async () => {
+test('all DOM-mounted accounts are prefetched before they enter the viewport', async () => {
   const f = contentFixture();
   await waitFor(() => f.badge(0)?.textContent === '🇯🇵 JPN' &&
-    f.badge(1)?.textContent === '🇯🇵 JPN');
-  assert.deepEqual(f.calls.map(c => c.username).sort(), ['alice','bob']);
-  assert.equal(f.badge(2).textContent, '');
+    f.badge(1)?.textContent === '🇯🇵 JPN' &&
+    f.badge(2)?.textContent === '🇯🇵 JPN');
+  assert.deepEqual(f.calls.map(c => c.username).sort(), ['alice', 'bob', 'carol']);
 });
 
-test('country chip occupies a fixed-width slot immediately BEFORE display-name link', async () => {
+test('chip takes its intrinsic width immediately BEFORE display-name link', async () => {
   const f = contentFixture();
   await waitFor(() => f.badge(0)?.textContent === '🇯🇵 JPN');
   const [badge, name] = f.rows[0].children;
@@ -294,8 +299,10 @@ test('country chip occupies a fixed-width slot immediately BEFORE display-name l
   assert.equal(f.badge(0), badge);
   assert.equal(f.rows[0].style.flexDirection, 'row');
   assert.equal(f.rows[0].style.alignItems, 'center');
-  assert.equal(badge.style.width, '5.5rem');
-  assert.equal(badge.style.flex, '0 0 5.5rem');
+  assert.equal(badge.style.width, undefined);
+  assert.equal(badge.style.minWidth, undefined);
+  assert.equal(badge.style.maxWidth, undefined);
+  assert.equal(badge.style.flex, '0 0 auto');
   assert.equal(badge.style.backgroundColor, '#f5f5f5');
   assert.equal(badge.style.paddingInline, '0.35rem');
   assert.equal(name.textContent, 'Alice');
@@ -311,8 +318,8 @@ test('broad geographical regions have square light-background chips', async () =
   assert.equal(badge.style.paddingInline, '0.35rem');
   assert.equal(badge.style.borderRadius, '0');
   assert.equal(badge.style.boxSizing, 'border-box');
-  assert.equal(badge.style.width, '5.5rem');
-  assert.equal(badge.style.textOverflow, 'ellipsis');
+  assert.equal(badge.style.width, undefined);
+  assert.equal(badge.style.textOverflow, undefined);
   assert.equal(badge.style.whiteSpace, 'nowrap');
   assert.equal(badge.title, 'Account based in East Asia (according to X)');
 });
@@ -330,7 +337,7 @@ test('ISO alpha-3 chips resolve country names, aliases and alpha-2/3 codes', asy
     accounts: cases.map((_, i) => ({ handle: 'Country' + i, name: 'Country ' + i })),
     locations: Object.fromEntries(cases.map(([location], i) => ['country' + i, location]))
   });
-  await waitFor(() => cases.every(([, label], i) => f.badge(i)?.style.backgroundImage === 'none'));
+  await waitFor(() => cases.every(([, label], i) => f.badge(i)?.textContent === label));
   assert.deepEqual(cases.map((_, i) => f.badge(i)?.textContent),
     cases.map(([, label]) => label));
   for (const [i, [location, label]] of cases.entries()) {
@@ -357,7 +364,7 @@ test('CLDR region identifiers and variant names use curated abbreviations', asyn
     accounts: cases.map((_, i) => ({ handle: 'Region' + i, name: 'Region ' + i })),
     locations: Object.fromEntries(cases.map(([location], i) => ['region' + i, location]))
   });
-  await waitFor(() => cases.every(([, label], i) => f.badge(i)?.style.backgroundImage === 'none'));
+  await waitFor(() => cases.every(([, label], i) => f.badge(i)?.textContent === label));
   assert.deepEqual(cases.map((_, i) => f.badge(i)?.textContent),
     cases.map(([, label]) => label));
   for (const [i, [location, label]] of cases.entries()) {
@@ -366,26 +373,21 @@ test('CLDR region identifiers and variant names use curated abbreviations', asyn
   }
 });
 
-test('the fixed-width placeholder precedes the name without layout shift', async () => {
+test('no placeholder is inserted while account locations are loading', async () => {
   let finish;
   const pending = new Promise(resolve => { finish = resolve; });
   const f = contentFixture({ lookup: () => pending });
-  const slot = f.badge(0);
-  assert.equal(f.rows[0].children[0], slot);
-  assert.equal(f.rows[0].children[1], f.links[0]);
-  assert.equal(slot.textContent, '');
-  assert.equal(slot.style.width, '5.5rem');
-  assert.match(slot.style.backgroundImage, /linear-gradient/);
+  assert.equal(f.badge(0), undefined);
+  assert.deepEqual(f.rows[0].children, [f.links[0]]);
   finish({ success: true, country: 'East Asia' });
-  await waitFor(() => slot.textContent === 'E Asia');
-  assert.equal(f.rows[0].children[0], slot);
-  assert.equal(slot.style.width, '5.5rem');
-  assert.equal(slot.style.backgroundImage, 'none');
-  assert.equal(slot.style.backgroundColor, '#f5f5f5');
+  await waitFor(() => f.badge(0)?.textContent === 'E Asia');
+  assert.equal(f.rows[0].children[0], f.badge(0));
+  assert.equal(f.badge(0).style.width, undefined);
+  assert.equal(f.badge(0).style.backgroundColor, '#f5f5f5');
   assert.equal(f.rows[0].insertions, 1);
 });
 
-test('empty and failed lookups leave a blank reserved slot', async () => {
+test('empty and failed lookups leave no blank slot', async () => {
   for (const result of [
     { success: true, country: null },
     { success: false }
@@ -393,17 +395,15 @@ test('empty and failed lookups leave a blank reserved slot', async () => {
     let finish;
     const pending = new Promise(resolve => { finish = resolve; });
     const f = contentFixture({ lookup: () => pending });
-    const slot = f.badge(0);
+    assert.equal(f.badge(0), undefined);
     finish(result);
-    await waitFor(() => slot.style.backgroundImage === 'none');
-    assert.equal(slot.textContent, '');
-    assert.equal(f.rows[0].children[0], slot);
-    assert.equal(slot.style.width, '5.5rem');
-    assert.equal(slot.style.backgroundColor, 'transparent');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(f.badge(0), undefined);
+    assert.deepEqual(f.rows[0].children, [f.links[0]]);
   }
 });
 
-test('rescans reuse existing slot rather than duplicating it', async () => {
+test('rescans reuse the existing chip rather than duplicating it', async () => {
   const f = contentFixture({ locations: { alice: 'East Asia' } });
   await waitFor(() => f.badge(0)?.textContent === 'E Asia');
   const slot = f.badge(0);
@@ -449,6 +449,74 @@ test('UserCell puts account badge before display name and keeps bio mentions inl
   assert.equal(label.style.borderRadius, '0');
   assert.equal(mentions[2].row.style.flexDirection, undefined,
     'do not override inline bio layout');
+});
+
+test('quoted-post header with plain-text name and tabindex handle renders location', async () => {
+  const f = contentFixture({
+    accounts: [{ type: 'User-Name', quoted: true,
+      handle: 'PeterJ_Walker', name: 'Peter Walker' }],
+    locations: { peterj_walker: 'United States' }
+  });
+  await waitFor(() => f.badge(0)?.textContent === '🇺🇸 USA');
+  assert.deepEqual(f.calls.map(call => call.username), ['peterj_walker']);
+  assert.equal(f.rows[0].children[0], f.badge(0));
+  assert.equal(f.rows[0].children[1], f.links[0]);
+  assert.equal(f.rows[0].style.flexDirection, 'row');
+  assert.equal(f.badge(0).style.flex, '0 0 auto');
+  assert.equal(f.badge(0).style.width, undefined);
+  f.listeners.get('scroll')();
+  await new Promise(resolve => setTimeout(resolve, 120));
+  assert.equal(f.rows[0].children.length, 2);
+  assert.equal(f.rows[0].insertions, 1);
+  assert.equal(f.calls.length, 1);
+});
+
+test('UserCell account, mentions and quoted header remain distinct', async () => {
+  const f = contentFixture({
+    accounts: [
+      { type: 'UserCell', handle: 'PeterJ_Walker', name: 'Peter Walker',
+        bio: ['OpenRouter', 'cartainc'] },
+      { type: 'User-Name', quoted: true, handle: 'PeterJ_Walker',
+        name: 'Peter Walker' }
+    ],
+    locations: { peterj_walker: 'United States', openrouter: 'United States',
+      cartainc: 'United States' }
+  });
+  await waitFor(() => f.badge(0)?.textContent === '🇺🇸 USA' &&
+    f.badge(1)?.textContent === '🇺🇸 USA' &&
+    f.bioRows[0].every(mention => mention.row.children[1]?.textContent === '🇺🇸 USA'));
+  assert.deepEqual(f.calls.map(call => call.username).sort(),
+    ['peterj_walker', 'openrouter', 'cartainc'].sort());
+  assert.equal(f.rows[0].children.length, 2);
+  assert.equal(f.rows[1].children.length, 2);
+});
+
+test('visible accounts are fetched before offscreen accounts in DOM order', async () => {
+  const f = contentFixture({
+    accounts: [
+      { type: 'User-Name', handle: 'FarAway', name: 'Far Away', offscreen: true },
+      { type: 'User-Name', handle: 'CloseBy', name: 'Close By' }
+    ]
+  });
+  await waitFor(() => f.calls.length === 2);
+  assert.deepEqual(f.calls.map(call => call.username), ['closeby', 'faraway']);
+});
+
+test('a newly visible account can overtake a full offscreen prefetch queue', async () => {
+  let finish;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const accounts = Array.from({ length: 160 }, (_, index) => ({
+    type: 'User-Name', handle: 'Person' + index,
+    name: 'Person ' + index, offscreen: true
+  }));
+  const f = contentFixture({ accounts, lookup: () => pending });
+  assert.equal(f.calls.length, 4);
+  accounts[159].offscreen = false;
+  f.listeners.get('scroll')();
+  await new Promise(resolve => setTimeout(resolve, 120));
+  finish({ success: true, country: 'Japan' });
+  await waitFor(() => f.calls.length >= 5);
+  assert.equal(f.calls[4].username, 'person159');
 });
 
 

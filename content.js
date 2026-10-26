@@ -5,9 +5,6 @@
   const USER_SELECTOR = '[data-testid="User-Name"], [data-testid="UserName"], [data-testid="UserCell"]';
   const MAX_IN_FLIGHT = 4;
   const MAX_QUEUE = 150;
-  // Reserve one consistent footprint for location chips and empty results.
-  // Without it, the timestamp moves horizontally after every API response.
-  const LOCATION_WIDTH = '5.5rem';
   const entries = new Map();
   const queued = new Set();
   const urgent = new Set();
@@ -124,6 +121,7 @@
           handles.add(value.slice(1).toLowerCase());
         }
       }
+      let foundHeader = false;
       for (const link of links) {
         if (link.getAttribute('tabindex') === '-1') continue;
         if (link.getAttribute('role') !== 'link') continue;
@@ -135,7 +133,24 @@
         if (seen.has(link)) continue;
         seen.add(link);
         found.push({ link, username: match[1].toLowerCase(), placement: 'header' });
+        foundHeader = true;
         break;
+      }
+      // Quoted posts have a plain-text name and a tabindex=-1 handle wrapper,
+      // not the profile links used in normal tweet headers and UserCells.
+      if (!foundHeader && container.getAttribute?.('data-testid') !== 'UserCell') {
+        const handle = [...container.querySelectorAll('[tabindex="-1"]')]
+          .map(node => /^@([a-zA-Z0-9_]{1,15})$/.exec(node.textContent.trim()))
+          .find(Boolean);
+        if (handle) {
+          const name = [...container.querySelectorAll('div[dir="ltr"]')]
+            .find(node => node.textContent.trim() &&
+              node.textContent.trim() !== '@' + handle[1]);
+          if (name && !seen.has(name)) {
+            seen.add(name);
+            found.push({ link: name, username: handle[1].toLowerCase(), placement: 'header' });
+          }
+        }
       }
       // UserCell biographies can contain @mentions with their own locations.
       // Keep those as inline annotations, but never mistake them for the
@@ -161,31 +176,32 @@
     return rect.bottom > 0 && rect.top < height && rect.right > 0 && rect.left < width;
   }
 
-  function paint(link, entry, loading = false, placement = 'header') {
+  function paint({ link, username, placement }, entry) {
     // Header locations precede display names. Bio mention badges instead sit
     // after their @mention wrapper in the existing inline biography flow.
     const anchor = placement === 'mention' ? link.parentElement : link;
     const row = anchor?.parentElement;
     if (!row) return;
-    const username = link.getAttribute('href')?.replace(/^\//, '').toLowerCase();
     const existing = [...row.children].filter(child => child.dataset?.xAccountFlag === 'true');
     let badge = existing.find(child => child.dataset.xAccountHandle === username);
     for (const old of existing) if (old !== badge) old.remove();
+    const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
+    const display = locationLabel(location);
+    // Pending, empty and failed lookups do not create placeholder elements.
+    if (!display) {
+      badge?.remove();
+      return;
+    }
     if (!badge) {
       badge = document.createElement('span');
       badge.dataset.xAccountFlag = 'true';
       badge.dataset.xAccountHandle = username;
       badge.style.display = 'inline-block';
       badge.style.boxSizing = 'border-box';
-      badge.style.width = LOCATION_WIDTH;
-      badge.style.flex = '0 0 ' + LOCATION_WIDTH;
-      badge.style.minWidth = LOCATION_WIDTH;
-      badge.style.maxWidth = LOCATION_WIDTH;
+      badge.style.flex = '0 0 auto';
       badge.style.marginInlineEnd = placement === 'header' ? '0.35rem' : '0';
       badge.style.marginInlineStart = placement === 'mention' ? '0.35rem' : '0';
       badge.style.whiteSpace = 'nowrap';
-      badge.style.overflow = 'hidden';
-      badge.style.textOverflow = 'ellipsis';
       badge.style.alignSelf = 'center';
       badge.style.verticalAlign = 'middle';
       badge.style.lineHeight = '1.25rem';
@@ -204,58 +220,53 @@
       row.insertBefore(badge, next);
     }
 
-    const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
-    const display = locationLabel(location);
     if (badge.textContent !== display) badge.textContent = display;
     badge.style.fontSize = '0.75rem';
-    badge.style.paddingInline = display ? '0.35rem' : '0';
-    badge.style.backgroundColor = display ? '#f5f5f5' : 'transparent';
-    badge.style.color = display ? '#171717' : 'inherit';
+    badge.style.paddingInline = '0.35rem';
+    badge.style.backgroundColor = '#f5f5f5';
+    badge.style.color = '#171717';
     badge.style.borderRadius = '0';
-
-    const pending = loading && !display;
-    badge.style.backgroundImage = pending
-      ? 'linear-gradient(rgba(113, 118, 123, 0.25), rgba(113, 118, 123, 0.25))'
-      : 'none';
-    badge.style.backgroundSize = '3.25rem 0.55rem';
-    badge.style.backgroundPosition = 'left center';
-    badge.style.backgroundRepeat = 'no-repeat';
-    if (pending) {
-      badge.title = 'Loading account location';
-      badge.setAttribute('aria-label', 'Loading account location');
-    } else if (display) {
-      const label = 'Account based in ' + location + ' (according to X)' +
-        (entry.accurate === false ? '; X marks this location as uncertain' : '');
-      badge.title = label;
-      badge.setAttribute('aria-label', label);
-    } else {
-      badge.removeAttribute('title');
-      badge.removeAttribute('aria-label');
-    }
+    const label = 'Account based in ' + location + ' (according to X)' +
+      (entry.accurate === false ? '; X marks this location as uncertain' : '');
+    badge.title = label;
+    badge.setAttribute('aria-label', label);
   }
 
   function paintUsername(username) {
     const current = entries.get(username);
     const valid = current?.expires > Date.now() ? current : null;
-    const loading = !valid && Date.now() >= retryAt;
     for (const item of findHandles()) {
-      if (item.username === username) paint(item.link, valid, loading, item.placement);
+      if (item.username === username) paint(item, valid);
     }
   }
 
   function enqueue(username, priority = false) {
     const current = entries.get(username);
     if (current?.expires > Date.now() || inFlight.has(username)) return;
-    if (priority) urgent.add(username);
     if (queued.has(username)) {
       if (priority) {
+        urgent.add(username);
         const index = queue.indexOf(username);
         if (index > 0) queue.unshift(...queue.splice(index, 1));
       }
-    } else if (queue.length < MAX_QUEUE) {
-      queued.add(username);
-      if (priority) queue.unshift(username);
-      else queue.push(username);
+    } else {
+      // New visible rows must not get stuck behind a full prefetch queue.
+      if (priority && queue.length >= MAX_QUEUE) {
+        const index = queue.findLastIndex(name => !urgent.has(name));
+        if (index >= 0) {
+          const dropped = queue.splice(index, 1)[0];
+          queued.delete(dropped);
+        }
+      }
+      if (queue.length < MAX_QUEUE) {
+        queued.add(username);
+        if (priority) {
+          urgent.add(username);
+          queue.unshift(username);
+        } else {
+          queue.push(username);
+        }
+      }
     }
     pump();
   }
@@ -283,7 +294,6 @@
           if (result?.success) {
             entries.set(username, { country: result.country, accurate: result.accurate,
               expires: Date.now() + 30 * 60 * 1000 });
-            // The fixed slot is already present; only its contents change.
           } else if (result?.retryAt > Date.now()) {
             delayRetry(result.retryAt);
           } else {
@@ -301,25 +311,27 @@
   }
 
   function scan() {
-    const visibleNames = new Set();
-    for (const { link, username, placement } of findHandles()) {
-      const current = entries.get(username);
-      // Create the fixed-width loading slot before any network lookup starts.
-      // A completed empty result keeps the slot but clears the skeleton.
-      const valid = current?.expires > Date.now() ? current : null;
-      paint(link, valid, !valid && Date.now() >= retryAt, placement);
-      if (visible(link)) {
-        visibleNames.add(username);
-        if (!current || current.expires <= Date.now()) enqueue(username);
-      }
-    }
-    // Do not prefetch accounts that have since scrolled away.
+    const items = findHandles();
+    const mountedNames = new Set(items.map(item => item.username));
+    // React unmounts virtualized rows; discard queued work for removed rows.
     for (let i = queue.length - 1; i >= 0; i--) {
-      if (!visibleNames.has(queue[i])) {
+      if (!mountedNames.has(queue[i])) {
         queued.delete(queue[i]);
         urgent.delete(queue[i]);
         queue.splice(i, 1);
       }
+    }
+    for (const item of items) {
+      const current = entries.get(item.username);
+      paint(item, current?.expires > Date.now() ? current : null);
+    }
+    // Prefetch all DOM-mounted accounts, not just accounts already in view.
+    // Prioritize visible rows if the page contains a large batch.
+    for (const item of items) {
+      if (visible(item.link)) enqueue(item.username, true);
+    }
+    for (const item of items) {
+      if (!visible(item.link)) enqueue(item.username);
     }
     pump();
   }
