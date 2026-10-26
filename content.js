@@ -83,6 +83,13 @@
     '419': 'LATAM'
   };
   const otherAbbreviations = { 'middle east': 'M East', 'central europe': 'C Europe' };
+  // UN M49 Southern Asia (034); match resolved ISO codes so CLDR names,
+  // country aliases and alpha-2/alpha-3 identifiers receive the same colour.
+  const southAsianCountries = new Set([
+    'AF', 'BD', 'BT', 'IN', 'IR', 'MV', 'NP', 'PK', 'LK'
+  ]);
+  const SOUTH_ASIA_BACKGROUND = '#fee2e2'; // Tailwind red-100
+  const SOUTH_ASIA_TEXT = '#7f1d1d'; // Tailwind red-900
 
   let scanTimer = null;
   let retryTimer = null;
@@ -99,6 +106,11 @@
     const region = regionCodes.get(key);
     if (region) return regionAbbreviations[region] || regionNames.of(region);
     return otherAbbreviations[key] || location;
+  }
+
+  function isSouthAsianLocation(location) {
+    const key = location.toLowerCase();
+    return southAsianCountries.has(countries.get(key)) || regionCodes.get(key) === '034';
   }
 
   function findHandles(root = document) {
@@ -219,8 +231,9 @@
     if (badge.textContent !== display) badge.textContent = display;
     badge.style.fontSize = '0.75rem';
     badge.style.paddingInline = '0.35rem';
-    badge.style.backgroundColor = '#f5f5f5';
-    badge.style.color = '#171717';
+    const southAsia = isSouthAsianLocation(location);
+    badge.style.backgroundColor = southAsia ? SOUTH_ASIA_BACKGROUND : '#f5f5f5';
+    badge.style.color = southAsia ? SOUTH_ASIA_TEXT : '#171717';
     badge.style.borderRadius = '0';
     const label = 'Account based in ' + location + ' (according to X)' +
       (entry.accurate === false ? '; X marks this location as uncertain' : '');

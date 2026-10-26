@@ -380,6 +380,58 @@ test('CLDR region identifiers and variant names use curated abbreviations', asyn
   }
 });
 
+test('UN M49 Southern Asia and all nine constituent countries use Tailwind red chips', async () => {
+  const countries = [
+    ['Afghanistan', 'AF', 'AFG'], ['Bangladesh', 'BD', 'BGD'],
+    ['Bhutan', 'BT', 'BTN'], ['India', 'IN', 'IND'],
+    ['Iran', 'IR', 'IRN'], ['Maldives', 'MV', 'MDV'],
+    ['Nepal', 'NP', 'NPL'], ['Pakistan', 'PK', 'PAK'],
+    ['Sri Lanka', 'LK', 'LKA']
+  ];
+  const cases = [
+    ...['South Asia', 'Southern Asia', '034'].map(location => [location, 'S Asia', true]),
+    ...countries.flatMap(([name, alpha2, alpha3]) => {
+      const flag = String.fromCodePoint(...[...alpha2].map(c => 127397 + c.charCodeAt(0)));
+      return [name, alpha2, alpha3].map(location =>
+        [location, flag + ' ' + alpha3, true]);
+    }),
+    ['China', '🇨🇳 CHN', false], ['Myanmar', 'Myanmar', false],
+    ['British Indian Ocean Territory', '🇮🇴 IOT', false],
+    ['Southeast Asia', 'SE Asia', false], ['Western Asia', 'W Asia', false],
+    ['Asia', 'Asia', false]
+  ];
+  const f = contentFixture({
+    accounts: cases.map((_, i) => ({ handle: 'Place' + i, name: 'Place ' + i })),
+    locations: Object.fromEntries(cases.map(([location], i) => ['place' + i, location]))
+  });
+  await waitFor(() => cases.every((_, i) => !!f.badge(i)));
+  for (const [i, [location, label, southAsia]] of cases.entries()) {
+    const chip = f.badge(i);
+    assert.equal(chip.textContent, label);
+    assert.equal(chip.style.backgroundColor, southAsia ? '#fee2e2' : '#f5f5f5', location);
+    assert.equal(chip.style.color, southAsia ? '#7f1d1d' : '#171717', location);
+    assert.equal(chip.title, 'Account based in ' + location + ' (according to X)');
+  }
+});
+
+test('South Asian styling applies to inline bio mentions and quoted headers', async () => {
+  const f = contentFixture({
+    accounts: [
+      { type: 'UserCell', handle: 'Alice', name: 'Alice', bio: ['Bob'] },
+      { type: 'User-Name', quoted: true, handle: 'Carol', name: 'Carol' }
+    ],
+    locations: { alice: 'Pakistan', bob: 'South Asia', carol: 'Nepal' }
+  });
+  await waitFor(() => f.badge(0)?.textContent === '🇵🇰 PAK' &&
+    f.badge(1)?.textContent === '🇳🇵 NPL' &&
+    f.bioRows[0][0].link.previousElementSibling?.textContent === 'S Asia');
+  const chips = [f.badge(0), f.badge(1), f.bioRows[0][0].link.previousElementSibling];
+  for (const chip of chips) {
+    assert.equal(chip.style.backgroundColor, '#fee2e2');
+    assert.equal(chip.style.color, '#7f1d1d');
+  }
+});
+
 test('no placeholder is inserted while account locations are loading', async () => {
   let finish;
   const pending = new Promise(resolve => { finish = resolve; });

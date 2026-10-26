@@ -10,6 +10,10 @@ shown while the location is loading. Data comes from
 [FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/).
 It does not prove a person's real-world location.
 
+Southern Asia (`S Asia`) and its nine constituent countries under the UN M49
+classification use Tailwind `red-100` backgrounds and `red-900` text, instead
+of the neutral chip colours used elsewhere.
+
 ## Install temporarily
 
 1. Open `about:debugging#/runtime/this-firefox` in Firefox 128 or newer.
