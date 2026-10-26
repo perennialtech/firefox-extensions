@@ -16,7 +16,13 @@ posts and user lists before distributing changes.
 
 ## Distribution
 
-Standard Firefox requires a Mozilla-signed add-on package for permanent
-installation. Follow [Mozilla's signing and distribution guide](https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/)
-to package the extension and submit it for signing. This repository has no
-automated distribution process.
+The [release workflow](.github/workflows/release.yml) tests the extension,
+submits it to Mozilla for [unlisted signing](https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/),
+and attaches the signed `.xpi` to a GitHub release.
+
+Configure the GitHub Actions secrets `AMO_JWT_ISSUER` and `AMO_JWT_SECRET`
+using [Mozilla API credentials](https://addons.mozilla.org/developers/addon/api/key/).
+Update `manifest.json` to the intended version, commit the changes, and push
+the matching `v<version>` tag. The tag must point to the release commit.
+Signing can fail or require Mozilla review; do not distribute an unsigned
+package as a substitute.

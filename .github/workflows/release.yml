@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify version and test
+        run: |
+          test "v$(node -p 'require("./manifest.json").version')" = "$GITHUB_REF_NAME"
+          node --check background.js
+          node --check content.js
+          node --test test.js
+      - name: Prepare extension
+        run: |
+          mkdir addon
+          cp manifest.json background.js content.js addon/
+      - name: Lint extension
+        run: npx --yes web-ext@10.8.0 lint --source-dir addon
+      - name: Sign for self-distribution
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: npx --yes web-ext@10.8.0 sign --channel unlisted --source-dir addon --artifacts-dir signed
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          packages=(signed/*.xpi)
+          test "${#packages[@]}" -eq 1
+          gh release create "$GITHUB_REF_NAME" "${packages[0]}" \
+            --verify-tag --title "$GITHUB_REF_NAME" --generate-notes

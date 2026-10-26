@@ -9,9 +9,18 @@ SE Asia or LATAM). Southern Asia and its countries use pale red chips.
 Locations come from [FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/)
 and **do not establish where a person actually lives or is currently located**.
 
-## Install temporarily
+## Install
 
-You need Firefox 128 or newer and access to this private GitHub repository.
+You need Firefox 140 or newer and access to this private GitHub repository.
+
+1. Download the signed `.xpi` from the [latest GitHub release](https://github.com/perennialtech/x-account-location-flags-firefox/releases/latest).
+2. Open `about:addons` in Firefox, select the gear menu, and choose **Install Add-on From File**.
+3. Select the downloaded `.xpi`, then open or refresh [X](https://x.com/).
+
+The signed extension stays installed after Firefox restarts. Install newer
+releases manually; automatic updates are not configured.
+
+## Install temporarily for development
 
 1. From the [repository](https://github.com/perennialtech/x-account-location-flags-firefox), select **Code → Download ZIP** and extract it.
 2. In Firefox, open `about:debugging#/runtime/this-firefox`.
@@ -19,9 +28,7 @@ You need Firefox 128 or newer and access to this private GitHub repository.
 4. Open or refresh [X](https://x.com/). Accounts with available location metadata
    should show a chip before their display name; the first lookup can take a moment.
 
-Temporary extensions are removed when Firefox restarts. For permanent use in
-standard Firefox, the extension must be packaged and [signed by Mozilla](https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/).
-This repository does not provide a signed installable package.
+Temporary extensions are removed when Firefox restarts.
 
 ## Troubleshooting
 
