@@ -150,7 +150,7 @@
   const southAsianCountries = new Set([
     'AF', 'BD', 'BT', 'IN', 'IR', 'MV', 'NP', 'PK', 'LK'
   ]);
-  const SOUTH_ASIA_BACKGROUND = '#fee2e2'; // Tailwind red-100
+  const SOUTH_ASIA_BACKGROUND = '#fca5a5'; // Tailwind red-300
   const SOUTH_ASIA_TEXT = '#7f1d1d'; // Tailwind red-900
 
   let scanTimer = null;

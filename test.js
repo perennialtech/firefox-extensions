@@ -48,6 +48,19 @@ async function waitFor(predicate, ms = 2000) {
   }
 }
 
+function contrastRatio(foreground, background) {
+  function luminance(hex) {
+    const channels = hex.match(/[0-9a-f]{2}/gi).map(channel => {
+      const value = parseInt(channel, 16) / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    });
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  }
+  const a = luminance(foreground);
+  const b = luminance(background);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
 test('FxTwitter about endpoint, no cookies, country and accuracy returned', async () => {
   const f = backgroundFixture();
   assert.equal(JSON.stringify(await f.send('alice')), JSON.stringify({
@@ -547,10 +560,13 @@ test('UN M49 Southern Asia and all nine constituent countries use Tailwind red c
   for (const [i, [location, label, southAsia]] of cases.entries()) {
     const chip = f.badge(i);
     assert.equal(chip.textContent, label);
-    assert.equal(chip.style.backgroundColor, southAsia ? '#fee2e2' : '#f5f5f5', location);
+    assert.equal(chip.style.backgroundColor, southAsia ? '#fca5a5' : '#f5f5f5', location);
     assert.equal(chip.style.color, southAsia ? '#7f1d1d' : '#171717', location);
     assert.equal(chip.title, 'Account based in ' + location + ' (according to X)');
   }
+  const chip = f.badge(0);
+  assert.ok(contrastRatio(chip.style.color, chip.style.backgroundColor) >= 4.5,
+    'South Asia chip text must meet WCAG AA normal-text contrast');
 });
 
 test('South Asian styling applies to inline bio mentions and quoted headers', async () => {
@@ -566,7 +582,7 @@ test('South Asian styling applies to inline bio mentions and quoted headers', as
     f.bioRows[0][0].link.previousElementSibling?.textContent === 'S Asia');
   const chips = [f.badge(0), f.badge(1), f.bioRows[0][0].link.previousElementSibling];
   for (const chip of chips) {
-    assert.equal(chip.style.backgroundColor, '#fee2e2');
+    assert.equal(chip.style.backgroundColor, '#fca5a5');
     assert.equal(chip.style.color, '#7f1d1d');
   }
 });
