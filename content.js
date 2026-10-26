@@ -33,13 +33,26 @@
     'TRTUR TTTTO TVTUV TWTWN TZTZA UAUKR UGUGA UMUMI USUSA UYURY UZUZB VAVAT VCVCT VEVEN',
     'VGVGB VIVIR VNVNM VUVUT WFWLF WSWSM YEYEM YTMYT ZAZAF ZMZMB ZWZWE'
   ].join(' ').split(' ')).map(item => [item.slice(0, 2), item.slice(2)]));
+  // CLDR's display names often differ from ISO or X's labels. Normalize
+  // purely typographic differences once, retaining distinct country/region
+  // identifiers and leaving unknown locations untouched.
+  function locationKey(value) {
+    return value.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase()
+      .replace(/[\u2018\u2019\u02bc]/g, "'")
+      .replace(/&/g, ' and ')
+      .replace(/\bst\.\s/g, 'saint ')
+      .replace(/\s+/g, ' ').trim();
+  }
+
   const countries = new Map();
   for (const [code, alpha3] of countryCodes) {
-    countries.set(code.toLowerCase(), code);
-    countries.set(alpha3.toLowerCase(), code);
-    countries.set(regionNames.of(code).toLowerCase(), code);
+    countries.set(locationKey(code), code);
+    countries.set(locationKey(alpha3), code);
+    countries.set(locationKey(regionNames.of(code)), code);
   }
-  // Common FxTwitter labels that differ from CLDR English country names.
+  // ISO 3166-1 English names and common X labels that differ from CLDR.
+  // Keep the non-typographic variants explicit: never guess a country for
+  // an unknown location or a broader geographical region.
   for (const [name, code] of Object.entries({
     'united states of america': 'US', 'uk': 'GB', 'korea': 'KR',
     'south korea': 'KR', 'north korea': 'KP', 'republic of korea': 'KR',
@@ -47,8 +60,56 @@
     'democratic republic of the congo': 'CD', 'dr congo': 'CD',
     'republic of the congo': 'CG', 'vatican city': 'VA',
     'palestine': 'PS', 'hong kong': 'HK', 'macao': 'MO', 'macau': 'MO',
-    'viet nam': 'VN', 'bosnia and herzegovina': 'BA'
-  })) countries.set(name, code);
+    'viet nam': 'VN', 'bosnia and herzegovina': 'BA',
+    'bonaire, sint eustatius and saba': 'BQ', 'bonaire': 'BQ',
+    'bolivia, plurinational state of': 'BO', 'brunei darussalam': 'BN',
+    'congo, the democratic republic of the': 'CD', 'congo': 'CG',
+    'cabo verde': 'CV', 'falkland islands (malvinas)': 'FK',
+    'micronesia, federated states of': 'FM',
+    'heard island and mcdonald islands': 'HM',
+    'iran, islamic republic of': 'IR', 'korea, republic of': 'KR',
+    "lao people's democratic republic": 'LA',
+    'saint martin (french part)': 'MF', 'moldova, republic of': 'MD',
+    'myanmar': 'MM', 'pitcairn': 'PN',
+    "korea, democratic people's republic of": 'KP',
+    'palestine, state of': 'PS', 'russian federation': 'RU',
+    'south georgia and the south sandwich islands': 'GS',
+    'saint helena, ascension and tristan da cunha': 'SH',
+    'sint maarten (dutch part)': 'SX', 'syrian arab republic': 'SY',
+    'taiwan, province of china': 'TW',
+    'tanzania, united republic of': 'TZ',
+    'united states minor outlying islands': 'UM',
+    'holy see (vatican city state)': 'VA',
+    'saint vincent and the grenadines': 'VC',
+    'venezuela, bolivarian republic of': 'VE',
+    'virgin islands, british': 'VG', 'virgin islands, u.s.': 'VI',
+    // Short and historical labels observed or documented for X locations.
+    'macedonia': 'MK', 'east timor': 'TL', 'swaziland': 'SZ',
+    'burma': 'MM', 'holy see': 'VA',
+    'great britain': 'GB',
+    'united kingdom of great britain and northern ireland': 'GB',
+    'uae': 'AE', 'republic of moldova': 'MD',
+    'federated states of micronesia': 'FM',
+    'bosnia': 'BA', 'britain': 'GB', 'svalbard': 'SJ',
+    'us virgin islands': 'VI', 'united states virgin islands': 'VI',
+    'congo-brazzaville': 'CG', 'congo-kinshasa': 'CD',
+    "democratic people's republic of korea": 'KP',
+    'micronesia (federated states of)': 'FM',
+    'united republic of tanzania': 'TZ', 'state of palestine': 'PS',
+    'svalbard and jan mayen islands': 'SJ',
+    'wallis and futuna islands': 'WF', 'naoero': 'NR',
+    'bolivia (plurinational state of)': 'BO',
+    'iran (islamic republic of)': 'IR',
+    'netherlands (kingdom of the)': 'NL',
+    'venezuela (bolivarian republic of)': 'VE',
+    'china, hong kong special administrative region': 'HK',
+    'china, macao special administrative region': 'MO',
+    // CLDR alternative territory names (short, variant and Chagos forms).
+    'cocos islands': 'CC', 'congo (drc)': 'CD',
+    'congo (republic)': 'CG',
+    'falkland islands (islas malvinas)': 'FK',
+    'chagos archipelago': 'IO', 'aotearoa new zealand': 'NZ'
+  })) countries.set(locationKey(name), code);
 
   // CLDR territory-containment region identifiers (including groupings).
   // Intl.DisplayNames provides the CLDR English names, not a second
@@ -58,8 +119,8 @@
     '021 029 030 034 035 039 053 054 057 061 142 143 145 150 ' +
     '151 154 155 202 419 EU EZ QO UN').split(' ')) {
     const name = regionNames.of(code);
-    if (name !== code) regionCodes.set(name.toLowerCase(), code);
-    regionCodes.set(code.toLowerCase(), code);
+    if (name !== code) regionCodes.set(locationKey(name), code);
+    regionCodes.set(locationKey(code), code);
   }
   // Common region spellings from X differ from CLDR's formal names.
   for (const [name, code] of Object.entries({
@@ -72,7 +133,7 @@
     'north europe': '154', 'south europe': '039',
     'east europe': '151', 'west europe': '155',
     'latin america and the caribbean': '419'
-  })) regionCodes.set(name, code);
+  })) regionCodes.set(locationKey(name), code);
   // Only presentation abbreviations are curated; identification uses CLDR.
   const regionAbbreviations = {
     '005': 'S America', '011': 'W Africa', '013': 'C America',
@@ -98,7 +159,7 @@
 
   function locationLabel(location) {
     if (!location) return '';
-    const key = location.toLowerCase();
+    const key = locationKey(location);
     const code = countries.get(key);
     if (code) {
       const flag = String.fromCodePoint(...[...code].map(c => 127397 + c.charCodeAt(0)));
@@ -110,7 +171,7 @@
   }
 
   function isSouthAsianLocation(location) {
-    const key = location.toLowerCase();
+    const key = locationKey(location);
     return southAsianCountries.has(countries.get(key)) || regionCodes.get(key) === '034';
   }
 

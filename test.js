@@ -359,6 +359,140 @@ test('ISO alpha-3 chips resolve country names, aliases and alpha-2/3 codes', asy
   }
 });
 
+test('ISO English country names omitted by CLDR resolve to their ISO flags', async () => {
+  // ISO 3166-1 English short names missing from Intl.DisplayNames(en).
+  const cases = [
+    ['Bonaire, Sint Eustatius and Saba', 'BQ', 'BES'],
+    ['Bolivia, Plurinational State of', 'BO', 'BOL'],
+    ['Brunei Darussalam', 'BN', 'BRN'],
+    ['Congo, The Democratic Republic of the', 'CD', 'COD'],
+    ['Congo', 'CG', 'COG'], ['Cabo Verde', 'CV', 'CPV'],
+    ['Falkland Islands (Malvinas)', 'FK', 'FLK'],
+    ['Micronesia, Federated States of', 'FM', 'FSM'],
+    ['Heard Island and McDonald Islands', 'HM', 'HMD'],
+    ['Iran, Islamic Republic of', 'IR', 'IRN'],
+    ['Korea, Republic of', 'KR', 'KOR'],
+    ["Lao People's Democratic Republic", 'LA', 'LAO'],
+    ['Saint Martin (French part)', 'MF', 'MAF'],
+    ['Moldova, Republic of', 'MD', 'MDA'], ['Myanmar', 'MM', 'MMR'],
+    ['Pitcairn', 'PN', 'PCN'],
+    ["Korea, Democratic People's Republic of", 'KP', 'PRK'],
+    ['Palestine, State of', 'PS', 'PSE'],
+    ['Russian Federation', 'RU', 'RUS'],
+    ['South Georgia and the South Sandwich Islands', 'GS', 'SGS'],
+    ['Saint Helena, Ascension and Tristan da Cunha', 'SH', 'SHN'],
+    ['Sint Maarten (Dutch part)', 'SX', 'SXM'],
+    ['Syrian Arab Republic', 'SY', 'SYR'],
+    ['Taiwan, Province of China', 'TW', 'TWN'],
+    ['Tanzania, United Republic of', 'TZ', 'TZA'],
+    ['United States Minor Outlying Islands', 'UM', 'UMI'],
+    ['Holy See (Vatican City State)', 'VA', 'VAT'],
+    ['Saint Vincent and the Grenadines', 'VC', 'VCT'],
+    ['Venezuela, Bolivarian Republic of', 'VE', 'VEN'],
+    ['Virgin Islands, British', 'VG', 'VGB'],
+    ['Virgin Islands, U.S.', 'VI', 'VIR'],
+    // ISO/CLDR differences handled by typography normalization.
+    ['Antigua and Barbuda', 'AG', 'ATG'],
+    ['Bosnia and Herzegovina', 'BA', 'BIH'],
+    ['Saint Barthélemy', 'BL', 'BLM'],
+    ["Côte d'Ivoire", 'CI', 'CIV'],
+    ['Hong Kong', 'HK', 'HKG'],
+    ['Saint Kitts and Nevis', 'KN', 'KNA'],
+    ['Saint Lucia', 'LC', 'LCA'],
+    ['Macao', 'MO', 'MAC'],
+    ['Saint Pierre and Miquelon', 'PM', 'SPM'],
+    ['Svalbard and Jan Mayen', 'SJ', 'SJM'],
+    ['Sao Tome and Principe', 'ST', 'STP'],
+    ['Turks and Caicos Islands', 'TC', 'TCA'],
+    ['Trinidad and Tobago', 'TT', 'TTO'],
+    ['Wallis and Futuna', 'WF', 'WLF']
+  ];
+  const f = contentFixture({
+    accounts: cases.map((_, i) => ({ handle: 'Iso' + i, name: 'ISO ' + i })),
+    locations: Object.fromEntries(cases.map(([location], i) => ['iso' + i, location]))
+  });
+  await waitFor(() => cases.every((_, i) => !!f.badge(i)));
+  for (const [i, [location, code, alpha3]] of cases.entries()) {
+    const flag = String.fromCodePoint(...[...code].map(c => 127397 + c.charCodeAt(0)));
+    assert.equal(f.badge(i).textContent, flag + ' ' + alpha3, location);
+  }
+});
+
+test('X variants, diacritics, ampersands and whitespace resolve consistently', async () => {
+  const cases = [
+    ['Macedonia', '🇲🇰 MKD'], ['East Timor', '🇹🇱 TLS'],
+    ['Bonaire', '🇧🇶 BES'], ['Swaziland', '🇸🇿 SWZ'],
+    ['Burma', '🇲🇲 MMR'], ['Holy See', '🇻🇦 VAT'],
+    ['Reunion', '🇷🇪 REU'], ['Réunion', '🇷🇪 REU'],
+    ['Sao Tome and Principe', '🇸🇹 STP'],
+    ["Côte d'Ivoire", '🇨🇮 CIV'], ['Côte d’Ivoire', '🇨🇮 CIV'],
+    ["Cote d'Ivoire", '🇨🇮 CIV'],
+    ['Antigua and Barbuda', '🇦🇬 ATG'],
+    ['Bosnia and Herzegovina', '🇧🇦 BIH'],
+    ['Bosnia & Herzegovina', '🇧🇦 BIH'],
+    ['Saint Lucia', '🇱🇨 LCA'], ['St. Lucia', '🇱🇨 LCA'],
+    ['Turkiye', '🇹🇷 TUR'], ['Türkiye', '🇹🇷 TUR'],
+    ['Great Britain', '🇬🇧 GBR'],
+    ['United Kingdom of Great Britain and Northern Ireland', '🇬🇧 GBR'],
+    ['UAE', '🇦🇪 ARE'], ['  Viet   Nam  ', '🇻🇳 VNM'],
+    ['Republic of Moldova', '🇲🇩 MDA'],
+    ['Federated States of Micronesia', '🇫🇲 FSM']
+  ];
+  const f = contentFixture({
+    accounts: cases.map((_, i) => ({ handle: 'Alias' + i, name: 'Alias ' + i })),
+    locations: Object.fromEntries(cases.map(([location], i) => ['alias' + i, location]))
+  });
+  await waitFor(() => cases.every((_, i) => !!f.badge(i)));
+  cases.forEach(([location, label], i) => assert.equal(f.badge(i).textContent, label, location));
+});
+
+test('peer-reported X labels and CLDR alternative territory names resolve', async () => {
+  const cases = [
+    ['Bosnia', '🇧🇦 BIH'], ['Britain', '🇬🇧 GBR'],
+    ['Svalbard', '🇸🇯 SJM'], ['US Virgin Islands', '🇻🇮 VIR'],
+    ['United States Virgin Islands', '🇻🇮 VIR'],
+    ['Congo-Brazzaville', '🇨🇬 COG'], ['Congo-Kinshasa', '🇨🇩 COD'],
+    ["Democratic People's Republic of Korea", '🇰🇵 PRK'],
+    ['Micronesia (Federated States of)', '🇫🇲 FSM'],
+    ['United Republic of Tanzania', '🇹🇿 TZA'],
+    ['State of Palestine', '🇵🇸 PSE'],
+    ['Svalbard and Jan Mayen Islands', '🇸🇯 SJM'],
+    ['Wallis and Futuna Islands', '🇼🇫 WLF'], ['Naoero', '🇳🇷 NRU'],
+    ['Bolivia (Plurinational State of)', '🇧🇴 BOL'],
+    ['Iran (Islamic Republic of)', '🇮🇷 IRN'],
+    ['Netherlands (Kingdom of the)', '🇳🇱 NLD'],
+    ['Venezuela (Bolivarian Republic of)', '🇻🇪 VEN'],
+    ['China, Hong Kong Special Administrative Region', '🇭🇰 HKG'],
+    ['China, Macao Special Administrative Region', '🇲🇴 MAC'],
+    ['Cocos Islands', '🇨🇨 CCK'], ['Congo (DRC)', '🇨🇩 COD'],
+    ['Congo (Republic)', '🇨🇬 COG'],
+    ['Falkland Islands (Islas Malvinas)', '🇫🇰 FLK'],
+    ['Chagos Archipelago', '🇮🇴 IOT'],
+    ['Aotearoa New Zealand', '🇳🇿 NZL']
+  ];
+  const f = contentFixture({
+    accounts: cases.map((_, i) => ({ handle: 'Variant' + i, name: 'Variant ' + i })),
+    locations: Object.fromEntries(cases.map(([name], i) => ['variant' + i, name]))
+  });
+  await waitFor(() => cases.every((_, i) => !!f.badge(i)));
+  cases.forEach(([name, label], i) => assert.equal(f.badge(i).textContent, label, name));
+});
+
+test('unrecognized locations and broad regions do not acquire country flags', async () => {
+  const cases = [
+    ['Kosovo', 'Kosovo'], ['XK', 'XK'], ['Atlantis', 'Atlantis'],
+    ['Europe', 'Europe'], ['European Union', 'European Union'],
+    ['East Asia & Pacific', 'East Asia & Pacific'],
+    ['Eastern Europe (Non-EU)', 'Eastern Europe (Non-EU)']
+  ];
+  const f = contentFixture({
+    accounts: cases.map((_, i) => ({ handle: 'Unknown' + i, name: 'Unknown ' + i })),
+    locations: Object.fromEntries(cases.map(([name], i) => ['unknown' + i, name]))
+  });
+  await waitFor(() => cases.every((_, i) => !!f.badge(i)));
+  cases.forEach(([name, label], i) => assert.equal(f.badge(i).textContent, label, name));
+});
+
 test('CLDR region identifiers and variant names use curated abbreviations', async () => {
   const cases = [
     ['East Asia', 'E Asia'], ['Eastern Asia', 'E Asia'], ['030', 'E Asia'],
@@ -398,7 +532,9 @@ test('UN M49 Southern Asia and all nine constituent countries use Tailwind red c
       return [name, alpha2, alpha3].map(location =>
         [location, flag + ' ' + alpha3, true]);
     }),
-    ['China', '🇨🇳 CHN', false], ['Myanmar', 'Myanmar', false],
+    ['Iran, Islamic Republic of', '🇮🇷 IRN', true],
+    ['Iran (Islamic Republic of)', '🇮🇷 IRN', true],
+    ['China', '🇨🇳 CHN', false], ['Myanmar', '🇲🇲 MMR', false],
     ['British Indian Ocean Territory', '🇮🇴 IOT', false],
     ['Southeast Asia', 'SE Asia', false], ['Western Asia', 'W Asia', false],
     ['Asia', 'Asia', false]

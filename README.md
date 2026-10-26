@@ -50,6 +50,8 @@ X cookies, or X authorization headers are transmitted. FxTwitter is an
 independent service, and its availability and accuracy depend on both FxTwitter
 and X. Country identifiers follow [ISO 3166-1](https://www.iso.org/iso-3166-country-codes.html),
 using the [iso-codes dataset](https://salsa.debian.org/iso-codes-team/iso-codes).
+Country names accept ISO and CLDR English spellings, common X variants, and
+typographic differences in accents, apostrophes, ampersands and whitespace.
 Region identifiers and English names follow [Unicode CLDR](https://cldr.unicode.org/)
 via `Intl.DisplayNames`; a small set of display abbreviations is curated locally.
 Non-ISO territories and unrecognized location values remain as text rather than
