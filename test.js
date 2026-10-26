@@ -143,6 +143,7 @@ function contentFixture(options = {}) {
         const children = this.parentElement?.children || [];
         return children[children.indexOf(this) + 1] || null;
       },
+      get nextSibling() { return this.nextElementSibling; },
       get previousElementSibling() {
         const children = this.parentElement?.children || [];
         return children[children.indexOf(this) - 1] || null;
@@ -152,6 +153,14 @@ function contentFixture(options = {}) {
         const index = children.indexOf(this);
         if (index >= 0) children.splice(index, 1);
         this.parentElement = null;
+      },
+      insertBefore(child, anchor) {
+        this.insertions = (this.insertions || 0) + 1;
+        if (child.parentElement) child.remove();
+        const children = this.children ||= [];
+        const index = anchor ? children.indexOf(anchor) : children.length;
+        children.splice(index < 0 ? children.length : index, 0, child);
+        child.parentElement = this;
       },
       getAttribute(key) { return this.attrs?.[key] ?? null; },
       setAttribute(key, value) { (this.attrs ||= {})[key] = value; },
@@ -210,9 +219,6 @@ function contentFixture(options = {}) {
       };
       link.parentElement = wrapper;
       wrapper.parentElement = inlineRow;
-      Object.defineProperty(wrapper, 'nextSibling', {
-        get() { return this.parentElement.children[this.parentElement.children.indexOf(this) + 1] || null; }
-      });
       return { link, row: inlineRow, name };
     });
     const bioLinks = mentions.map(item => item.link);
@@ -428,7 +434,7 @@ test('UserCell puts account badge before display name and keeps bio mentions inl
     }
   });
   await waitFor(() => f.badge(0)?.textContent === '🇯🇵 JPN' &&
-    f.bioRows[0][2].row.children[1]?.textContent === 'E Asia');
+    f.bioRows[0][2].link.nextElementSibling?.textContent === 'E Asia');
   assert.deepEqual(f.calls.map(call => call.username).sort(),
     ['ayatsunoyuni', 'stellive_kr', 'rainydayinabi', 'ka_xa_'].sort());
   assert.equal(f.rows[0].children[0], f.badge(0));
@@ -438,17 +444,42 @@ test('UserCell puts account badge before display name and keeps bio mentions inl
 
   const mentions = f.bioRows[0];
   for (const mention of mentions) {
-    assert.equal(mention.row.children[0].children[0], mention.link,
-      'mention link must retain its native inline wrapper');
-    assert.equal(mention.row.children.length, 2);
+    assert.equal(mention.row.children.length, 1,
+      'do not insert badge beside the inline mention wrapper');
+    assert.equal(mention.row.insertions, 0);
+    assert.equal(mention.row.children[0].children[0], mention.link);
+    assert.equal(mention.row.children[0].children.length, 2);
+    assert.equal(mention.row.children[0].children[1].dataset.xAccountFlag, 'true');
   }
-  const label = mentions[2].row.children[1];
+  const label = mentions[2].link.nextElementSibling;
   assert.equal(label.style.backgroundColor, '#f5f5f5');
   assert.equal(label.style.color, '#171717');
   assert.equal(label.style.paddingInline, '0.35rem');
   assert.equal(label.style.borderRadius, '0');
   assert.equal(mentions[2].row.style.flexDirection, undefined,
     'do not override inline bio layout');
+});
+
+test('UserCell bio location remains inline after @mention across rescans', async () => {
+  const f = contentFixture({
+    accounts: [{ type: 'UserCell', handle: 'DrLoupis',
+      name: 'Dr. Anastasia Maria Loupis', bio: ['DrLoupis__'] }],
+    locations: { drloupis: 'United States', drloupis__: 'United States' }
+  });
+  await waitFor(() => f.badge(0)?.textContent === '🇺🇸 USA' &&
+    f.bioRows[0][0].link.nextElementSibling?.textContent === '🇺🇸 USA');
+  const mention = f.bioRows[0][0];
+  const chip = mention.link.nextElementSibling;
+  assert.equal(mention.row.children.length, 1);
+  assert.equal(mention.row.children[0].children[0], mention.link);
+  assert.equal(mention.row.children[0].children[1], chip);
+  assert.equal(mention.row.insertions, 0);
+  f.listeners.get('scroll')();
+  await new Promise(resolve => setTimeout(resolve, 120));
+  assert.equal(mention.link.nextElementSibling, chip);
+  assert.equal(mention.row.children.length, 1);
+  assert.equal(mention.row.children[0].children.length, 2);
+  assert.equal(mention.row.insertions, 0);
 });
 
 test('quoted-post header with plain-text name and tabindex handle renders location', async () => {
@@ -484,7 +515,7 @@ test('UserCell account, mentions and quoted header remain distinct', async () =>
   });
   await waitFor(() => f.badge(0)?.textContent === '🇺🇸 USA' &&
     f.badge(1)?.textContent === '🇺🇸 USA' &&
-    f.bioRows[0].every(mention => mention.row.children[1]?.textContent === '🇺🇸 USA'));
+    f.bioRows[0].every(mention => mention.link.nextElementSibling?.textContent === '🇺🇸 USA'));
   assert.deepEqual(f.calls.map(call => call.username).sort(),
     ['peterj_walker', 'openrouter', 'cartainc'].sort());
   assert.equal(f.rows[0].children.length, 2);
@@ -525,7 +556,7 @@ test('bio-only containers without account identity are not looked up', async () 
     accounts: [{ type: 'UserCell', handle: 'NoName', name: '',
       bio: ['OtherAccount'] }]
   });
-  await waitFor(() => f.bioRows[0][0].row.children.length === 2);
+  await waitFor(() => f.bioRows[0][0].link.nextElementSibling?.textContent === '🇯🇵 JPN');
   assert.deepEqual(f.calls.map(call => call.username), ['otheraccount']);
   assert.equal(f.rows[0].children.length, 1, 'no account identity badge');
 });

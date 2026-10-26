@@ -177,10 +177,9 @@
   }
 
   function paint({ link, username, placement }, entry) {
-    // Header locations precede display names. Bio mention badges instead sit
-    // after their @mention wrapper in the existing inline biography flow.
-    const anchor = placement === 'mention' ? link.parentElement : link;
-    const row = anchor?.parentElement;
+    // Keep bio badges inside X's inline mention span. A sibling of that span
+    // can be laid out as a separate block and appear on the next line.
+    const row = link.parentElement;
     if (!row) return;
     const existing = [...row.children].filter(child => child.dataset?.xAccountFlag === 'true');
     let badge = existing.find(child => child.dataset.xAccountHandle === username);
@@ -213,10 +212,10 @@
       row.style.flexDirection = 'row';
       row.style.alignItems = 'center';
     }
-    const next = placement === 'header' ? anchor : anchor.nextSibling;
+    const next = placement === 'header' ? link : link.nextSibling;
     if (badge.parentElement !== row ||
-        (placement === 'header' ? badge.nextElementSibling !== anchor :
-          badge.previousElementSibling !== anchor)) {
+        (placement === 'header' ? badge.nextElementSibling !== link :
+          badge.previousElementSibling !== link)) {
       row.insertBefore(badge, next);
     }
 
