@@ -328,6 +328,32 @@ test('chip takes its intrinsic width immediately BEFORE display-name link', asyn
   assert.equal(name.textContent, 'Alice');
 });
 
+test('header, quoted-post and bio chips use a sans-serif font even with serif parent defaults', async () => {
+  const f = contentFixture({
+    accounts: [
+      { type: 'User-Name', handle: 'Alice', name: 'Alice' },
+      { type: 'User-Name', quoted: true, handle: 'Carol', name: 'Carol' },
+      { type: 'UserCell', handle: 'Bob', name: 'Bob', bio: ['Dave'] }
+    ],
+    locations: { alice: 'Japan', carol: 'East Asia', bob: 'Pakistan', dave: 'South Korea' }
+  });
+  await waitFor(() => f.badge(0) && f.badge(1) && f.badge(2) &&
+    f.bioRows[2][0].link.previousElementSibling?.dataset?.xAccountFlag === 'true');
+
+  const chips = [f.badge(0), f.badge(1), f.badge(2),
+    f.bioRows[2][0].link.previousElementSibling];
+  const expectedFont = 'TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  for (const chip of chips) {
+    assert.equal(chip.style.fontFamily, expectedFont);
+    chip.style.fontFamily = 'serif';
+  }
+
+  // Existing chips are restyled on rescans, not only when first created.
+  f.listeners.get('scroll')();
+  await waitFor(() => chips.every(chip => chip.style.fontFamily === expectedFont));
+  assert.equal(f.bioRows[2][0].link.previousElementSibling, chips[3]);
+});
+
 test('broad geographical regions have square light-background chips', async () => {
   const f = contentFixture({ locations: { alice: 'East Asia', bob: 'Europe' } });
   await waitFor(() => f.badge(0)?.textContent === 'E Asia' &&
