@@ -3,6 +3,9 @@
   'use strict';
 
   const USER_SELECTOR = '[data-testid="User-Name"], [data-testid="UserName"], [data-testid="UserCell"]';
+  // X assigns its font to the name elements, not always their parent row.
+  // Our sibling chips must not inherit Firefox's default serif font.
+  const CHIP_FONT_FAMILY = 'TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
   const MAX_IN_FLIGHT = 4;
   const MAX_QUEUE = 150;
   const entries = new Map();
@@ -291,6 +294,7 @@
     }
 
     if (badge.textContent !== display) badge.textContent = display;
+    badge.style.fontFamily = CHIP_FONT_FAMILY;
     badge.style.fontSize = '0.75rem';
     badge.style.paddingInline = '0.35rem';
     const southAsia = isSouthAsianLocation(location);
