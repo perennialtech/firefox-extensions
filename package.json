@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "scripts": {
+    "test": "node --test test.js",
+    "test:firefox": "node --test browser-font.test.js"
+  },
+  "devDependencies": {
+    "playwright": "1.60.0"
+  }
+}

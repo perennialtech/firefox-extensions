@@ -328,7 +328,7 @@ test('chip takes its intrinsic width immediately BEFORE display-name link', asyn
   assert.equal(name.textContent, 'Alice');
 });
 
-test('header, quoted-post and bio chips use a sans-serif font even with serif parent defaults', async () => {
+test('header, quoted-post and bio chips assign and reapply the sans-serif font stack', async () => {
   const f = contentFixture({
     accounts: [
       { type: 'User-Name', handle: 'Alice', name: 'Alice' },

@@ -15,3 +15,21 @@ jobs:
           node --check background.js
           node --check content.js
           node --test test.js
+  firefox:
+    name: Firefox font regression (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - if: runner.os == 'Linux'
+        run: npx playwright install --with-deps firefox
+      - if: runner.os == 'Windows'
+        run: npx playwright install firefox
+      - run: npm run test:firefox

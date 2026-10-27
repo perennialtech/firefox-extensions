@@ -21,6 +21,12 @@ jobs:
           node --check background.js
           node --check content.js
           node --test test.js
+      - name: Install Firefox test dependencies
+        run: |
+          npm ci
+          npx playwright install --with-deps firefox
+      - name: Verify computed chip fonts in Firefox
+        run: npm run test:firefox
       - name: Prepare extension
         run: |
           mkdir addon
