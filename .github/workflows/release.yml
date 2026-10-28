@@ -3,9 +3,11 @@ name: Release
 on:
   push:
     tags: ['v*', 'reddit-v*']
+  workflow_dispatch:
 
 jobs:
   release:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -89,6 +91,7 @@ jobs:
 
   deploy:
     needs: release
+    if: always() && (needs.release.result == 'success' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     concurrency:
       group: firefox-extension-pages

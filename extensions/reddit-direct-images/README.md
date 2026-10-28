@@ -13,7 +13,7 @@ image quality settings, or image URL parameters.
 
 ## Install
 
-Download the signed `.xpi` from the [Reddit Direct Images releases](https://github.com/perennialtech/x-account-location-flags-firefox/releases?q=reddit-v)
+Download the signed `.xpi` from the [Reddit Direct Images releases](https://github.com/perennialtech/firefox-extensions/releases?q=reddit-v)
 when a signed release is available. In Firefox, open `about:addons`, select
 the gear menu, and choose **Install Add-on From File**.
 

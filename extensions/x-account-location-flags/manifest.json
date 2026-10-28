@@ -6,7 +6,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "x-account-location-flags@perennialtech",
-      "update_url": "https://perennialtech.github.io/x-account-location-flags-firefox/updates.json",
+      "update_url": "https://perennialtech.github.io/firefox-extensions/updates.json",
       "strict_min_version": "140.0",
       "data_collection_permissions": {
         "required": ["websiteContent"]
