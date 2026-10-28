@@ -82,13 +82,6 @@ jobs:
           fi
           gh release create "$GITHUB_REF_NAME" "${packages[0]}" \
             --verify-tag --title "$GITHUB_REF_NAME" "${notes[@]}" "$latest"
-      - name: Generate Firefox update manifest for all signed extensions
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/build-updates.mjs
-      - uses: actions/upload-pages-artifact@v4
-        with:
-          path: site
 
   deploy:
     needs: release
@@ -97,12 +90,26 @@ jobs:
       group: firefox-extension-pages
       cancel-in-progress: false
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.pages.outputs.page_url }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Generate update manifest from the latest signed releases
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/build-updates.mjs
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
       - name: Deploy update manifest
         id: pages
         uses: actions/deploy-pages@v4

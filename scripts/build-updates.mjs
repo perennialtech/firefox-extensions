@@ -10,7 +10,11 @@ const EXTENSIONS = [
 
 export function latestSignedRelease(releases, tagPattern) {
   return releases
-    .filter(release => !release.draft && !release.prerelease && tagPattern.test(release.tag_name))
+    .filter(release =>
+      !release.draft &&
+      !release.prerelease &&
+      tagPattern.test(release.tag_name) &&
+      release.assets.filter(asset => asset.name.endsWith('.xpi')).length === 1)
     .sort((a, b) => {
       const left = a.tag_name.match(tagPattern).slice(1).map(Number);
       const right = b.tag_name.match(tagPattern).slice(1).map(Number);
@@ -57,10 +61,9 @@ async function main() {
   for (const { directory, tagPattern } of EXTENSIONS) {
     const release = latestSignedRelease(releases, tagPattern);
     if (!release) continue;
-    const assets = release.assets.filter(asset => asset.name.endsWith('.xpi'));
-    if (assets.length !== 1) throw new Error(`Expected one signed XPI in ${release.tag_name}`);
-    const download = await fetch(assets[0].browser_download_url);
-    if (!download.ok) throw new Error(`Failed to download ${assets[0].name}: HTTP ${download.status}`);
+    const asset = release.assets.find(asset => asset.name.endsWith('.xpi'));
+    const download = await fetch(asset.browser_download_url);
+    if (!download.ok) throw new Error(`Failed to download ${asset.name}: HTTP ${download.status}`);
     const bytes = Buffer.from(await download.arrayBuffer());
     const manifest = JSON.parse(await readFile(`extensions/${directory}/manifest.json`, 'utf8'));
     addons[manifest.browser_specific_settings.gecko.id] = {

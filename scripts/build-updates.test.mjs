@@ -12,9 +12,12 @@ test('chooses the newest signed stable version independently for each extension'
     release('v0.3.0'),
     release('v0.10.0'),
     release('v0.11.0', { prerelease: true }),
+    release('v0.12.0', { assets: [] }),
+    release('v0.13.0', { assets: [asset, asset] }),
     release('v1.0.0', { draft: true }),
     release('reddit-v0.3.0'),
     release('reddit-v0.5.0', { prerelease: true }),
+    release('reddit-v0.6.0', { assets: [] }),
   ];
   assert.equal(latestSignedRelease(releases, /^v(\d+)\.(\d+)\.(\d+)$/).tag_name, 'v0.10.0');
   assert.equal(latestSignedRelease(releases, /^reddit-v(\d+)\.(\d+)\.(\d+)$/).tag_name, 'reddit-v0.3.0');
