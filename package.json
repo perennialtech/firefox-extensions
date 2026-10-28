@@ -1,8 +1,9 @@
 {
+  "name": "firefox-extensions",
   "private": true,
   "scripts": {
-    "test": "node --test test.js",
-    "test:firefox": "node --test browser-font.test.js"
+    "test": "node --check extensions/x-account-location-flags/background.js && node --check extensions/x-account-location-flags/content.js && node --check extensions/reddit-direct-images/background.js && node --test extensions/x-account-location-flags/test.js extensions/reddit-direct-images/test/background.test.js scripts/build-updates.test.mjs",
+    "test:firefox": "node --test extensions/x-account-location-flags/browser-font.test.js"
   },
   "devDependencies": {
     "playwright": "1.60.0"

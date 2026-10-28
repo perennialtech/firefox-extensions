@@ -11,10 +11,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: |
-          node --check background.js
-          node --check content.js
-          node --test test.js
+      - run: npm test
+      - name: Lint Firefox extensions
+        run: |
+          for extension in extensions/*; do
+            mkdir -p addon
+            cp "$extension/manifest.json" "$extension/background.js" addon/
+            if test -f "$extension/content.js"; then cp "$extension/content.js" addon/; fi
+            npx --yes web-ext@10.8.0 lint --self-hosted --source-dir addon
+            rm -rf addon
+          done
   firefox:
     name: Firefox font regression (${{ matrix.os }})
     strategy:
