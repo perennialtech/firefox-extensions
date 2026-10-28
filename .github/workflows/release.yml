@@ -12,6 +12,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
@@ -23,15 +25,20 @@ jobs:
             reddit-v*)
               directory=extensions/reddit-direct-images
               prefix=reddit-v
+              is_reddit=true
               ;;
             v*)
               directory=extensions/x-account-location-flags
               prefix=v
+              is_reddit=false
               ;;
             *) exit 1 ;;
           esac
           test "$GITHUB_REF_NAME" = "${prefix}$(node -p "require('./$directory/manifest.json').version")"
           echo "directory=$directory" >> "$GITHUB_OUTPUT"
+          echo "is_reddit=$is_reddit" >> "$GITHUB_OUTPUT"
+          previous=$(git tag --list "${prefix}*" --sort=-version:refname | awk -v current="$GITHUB_REF_NAME" '$0 == current {found = 1; next} found {print; exit}')
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
       - name: Test both extensions
         run: npm test
       - name: Install Firefox test dependencies
@@ -57,12 +64,24 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          PREVIOUS_TAG: ${{ steps.extension.outputs.previous }}
+          IS_REDDIT: ${{ steps.extension.outputs.is_reddit }}
         run: |
           shopt -s nullglob
           packages=(signed/*.xpi)
           test "${#packages[@]}" -eq 1
+          if test -n "$PREVIOUS_TAG"; then
+            notes=(--generate-notes --notes-start-tag "$PREVIOUS_TAG")
+          else
+            notes=(--notes "Initial release of this extension.")
+          fi
+          if test "$IS_REDDIT" = true; then
+            latest=--latest=false
+          else
+            latest=--latest
+          fi
           gh release create "$GITHUB_REF_NAME" "${packages[0]}" \
-            --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+            --verify-tag --title "$GITHUB_REF_NAME" "${notes[@]}" "$latest"
       - name: Generate Firefox update manifest for all signed extensions
         env:
           GITHUB_TOKEN: ${{ github.token }}
