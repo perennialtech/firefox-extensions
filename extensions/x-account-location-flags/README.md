@@ -13,7 +13,9 @@ and **do not establish where a person actually lives or is currently located**.
 
 You need Firefox 140 or newer.
 
-1. Download the signed `.xpi` from the [latest GitHub release](https://github.com/perennialtech/x-account-location-flags-firefox/releases/latest).
+1. Download the signed `.xpi` from a release tagged `v<version>` in the
+   [GitHub releases](https://github.com/perennialtech/x-account-location-flags-firefox/releases?q=v).
+   Releases tagged `reddit-v<version>` are for a different extension.
 2. Open `about:addons` in Firefox, select the gear menu, and choose **Install Add-on From File**.
 3. Select the downloaded `.xpi`, then open or refresh [X](https://x.com/).
 
@@ -54,4 +56,4 @@ reported locations depend on X and FxTwitter.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for testing and distribution guidance.
+See [CONTRIBUTING.md](../../CONTRIBUTING.md) for testing and distribution guidance.

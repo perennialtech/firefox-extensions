@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*', 'reddit-v*']
 
 jobs:
   release:
@@ -15,12 +15,25 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - name: Verify version and test
+      - name: Select extension and verify version
+        id: extension
+        shell: bash
         run: |
-          test "v$(node -p 'require("./manifest.json").version')" = "$GITHUB_REF_NAME"
-          node --check background.js
-          node --check content.js
-          node --test test.js
+          case "$GITHUB_REF_NAME" in
+            reddit-v*)
+              directory=extensions/reddit-direct-images
+              prefix=reddit-v
+              ;;
+            v*)
+              directory=extensions/x-account-location-flags
+              prefix=v
+              ;;
+            *) exit 1 ;;
+          esac
+          test "$GITHUB_REF_NAME" = "${prefix}$(node -p "require('./$directory/manifest.json').version")"
+          echo "directory=$directory" >> "$GITHUB_OUTPUT"
+      - name: Test both extensions
+        run: npm test
       - name: Install Firefox test dependencies
         run: |
           npm ci
@@ -28,9 +41,12 @@ jobs:
       - name: Verify computed chip fonts in Firefox
         run: npm run test:firefox
       - name: Prepare extension
+        env:
+          EXTENSION_DIRECTORY: ${{ steps.extension.outputs.directory }}
         run: |
           mkdir addon
-          cp manifest.json background.js content.js addon/
+          cp "$EXTENSION_DIRECTORY/manifest.json" "$EXTENSION_DIRECTORY/background.js" addon/
+          if test -f "$EXTENSION_DIRECTORY/content.js"; then cp "$EXTENSION_DIRECTORY/content.js" addon/; fi
       - name: Lint extension
         run: npx --yes web-ext@10.8.0 lint --self-hosted --source-dir addon
       - name: Sign for self-distribution
@@ -47,31 +63,10 @@ jobs:
           test "${#packages[@]}" -eq 1
           gh release create "$GITHUB_REF_NAME" "${packages[0]}" \
             --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
-      - name: Generate Firefox update manifest
-        run: |
-          mkdir site
-          node --input-type=module - <<'JS'
-          import { createHash } from 'node:crypto';
-          import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
-
-          const manifest = JSON.parse(readFileSync('manifest.json', 'utf8'));
-          const files = readdirSync('signed').filter(name => name.endsWith('.xpi'));
-          if (files.length !== 1) throw new Error('Expected exactly one signed XPI');
-          const file = files[0];
-          const hash = createHash('sha256').update(readFileSync(`signed/${file}`)).digest('hex');
-          const update = {
-            addons: {
-              [manifest.browser_specific_settings.gecko.id]: {
-                updates: [{
-                  version: manifest.version,
-                  update_link: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.GITHUB_REF_NAME}/${encodeURIComponent(file)}`,
-                  update_hash: `sha256:${hash}`
-                }]
-              }
-            }
-          };
-          writeFileSync('site/updates.json', JSON.stringify(update, null, 2) + '\n');
-          JS
+      - name: Generate Firefox update manifest for all signed extensions
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/build-updates.mjs
       - uses: actions/upload-pages-artifact@v4
         with:
           path: site
@@ -79,6 +74,9 @@ jobs:
   deploy:
     needs: release
     runs-on: ubuntu-latest
+    concurrency:
+      group: firefox-extension-pages
+      cancel-in-progress: false
     permissions:
       pages: write
       id-token: write

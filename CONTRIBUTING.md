@@ -2,20 +2,14 @@
 
 ## Test
 
-With Node.js 22 (the version used in CI), run from the repository root:
+Run the Node tests and syntax checks for both extensions from the repository
+root using Node.js 22 or newer:
 
 ```sh
-node --check background.js
-node --check content.js
-node --test test.js
+npm test
 ```
 
-The tests mock FxTwitter and X's DOM. Also [load the extension temporarily in
-Firefox](README.md#install-temporarily-for-development) and check that location
-chips display in posts and user lists before distributing changes.
-
-For the real Firefox regression test (computed chip fonts under serif-styled
-parents, including chip reuse after rescanning), run:
+For the X location-chip regression test in real Firefox:
 
 ```sh
 npm ci
@@ -23,19 +17,34 @@ npx playwright install firefox
 npm run test:firefox
 ```
 
-This test executes the actual `content.js` against a real Firefox DOM with
-mocked location responses. CI runs it on both Linux and Windows.
+CI runs this browser regression on both Linux and Windows and lints both
+packaged extensions with `web-ext`.
 
-## Distribution
+## Release
 
-The [release workflow](.github/workflows/release.yml) tests the extension,
-submits it to Mozilla for [unlisted signing](https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/),
-attaches the signed `.xpi` to a GitHub release, and deploys a Firefox update
-manifest to GitHub Pages. Only completed, signed releases are advertised.
+Both extensions use the same unlisted Mozilla signing credentials and publish
+signed `.xpi` files to GitHub Releases. The two add-ons have independent
+versions and release tags:
 
-Configure the GitHub Actions secrets `AMO_JWT_ISSUER` and `AMO_JWT_SECRET`
-using [Mozilla API credentials](https://addons.mozilla.org/developers/addon/api/key/).
-Update `manifest.json` to the intended version, commit the changes, and push
-the matching `v<version>` tag. The tag must point to the release commit.
+| Extension | Manifest | Tag for version `1.2.3` |
+| --- | --- | --- |
+| X Account Location Flags | `extensions/x-account-location-flags/manifest.json` | `v1.2.3` |
+| Reddit Direct Images | `extensions/reddit-direct-images/manifest.json` | `reddit-v1.2.3` |
+
+Update the relevant manifest version, commit, and push the matching tag to
+trigger `.github/workflows/release.yml`. The release workflow tests both
+extensions, signs only the tagged extension, and attaches its signed `.xpi`
+to a GitHub release.
+
+The workflow rebuilds the shared
+[Firefox update manifest](https://perennialtech.github.io/x-account-location-flags-firefox/updates.json)
+from the latest signed release of **each** extension, then deploys it to
+GitHub Pages. This preserves the update URL and signed-release history of X
+Account Location Flags while allowing Reddit Direct Images to update
+independently. Unsigned or draft releases are not published as updates.
+
+The repository uses the GitHub Actions secrets `AMO_JWT_ISSUER` and
+`AMO_JWT_SECRET` to authenticate to
+[Mozilla's unlisted signing service](https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/).
 Signing can fail or require Mozilla review; do not distribute an unsigned
 package as a substitute.
