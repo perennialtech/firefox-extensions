@@ -17,7 +17,10 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "reddit-direct-images@perennialtech"
+      "id": "reddit-direct-images@perennialtech",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   }
 }
