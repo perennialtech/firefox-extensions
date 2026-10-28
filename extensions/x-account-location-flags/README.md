@@ -14,19 +14,19 @@ and **do not establish where a person actually lives or is currently located**.
 You need Firefox 140 or newer.
 
 1. Download the signed `.xpi` from a release tagged `v<version>` in the
-   [GitHub releases](https://github.com/perennialtech/x-account-location-flags-firefox/releases?q=v).
+   [GitHub releases](https://github.com/perennialtech/firefox-extensions/releases?q=v).
    Releases tagged `reddit-v<version>` are for a different extension.
 2. Open `about:addons` in Firefox, select the gear menu, and choose **Install Add-on From File**.
 3. Select the downloaded `.xpi`, then open or refresh [X](https://x.com/).
 
 The signed extension stays installed after Firefox restarts. Starting with
 version 0.2.0, Firefox can update it automatically from GitHub Releases using
-the [update manifest](https://perennialtech.github.io/x-account-location-flags-firefox/updates.json).
+the [update manifest](https://perennialtech.github.io/firefox-extensions/updates.json).
 If you installed an earlier version, install 0.2.0 manually once to enable updates.
 
 ## Install temporarily for development
 
-1. From the [repository](https://github.com/perennialtech/x-account-location-flags-firefox), select **Code → Download ZIP** and extract it.
+1. From the [repository](https://github.com/perennialtech/firefox-extensions), select **Code → Download ZIP** and extract it.
 2. In Firefox, open `about:debugging#/runtime/this-firefox`.
 3. Select **Load Temporary Add-on** and choose
    `extensions/x-account-location-flags/manifest.json` in the extracted folder.

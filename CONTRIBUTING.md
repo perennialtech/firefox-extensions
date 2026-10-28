@@ -37,11 +37,14 @@ extensions, signs only the tagged extension, and attaches its signed `.xpi`
 to a GitHub release.
 
 The workflow rebuilds the shared
-[Firefox update manifest](https://perennialtech.github.io/x-account-location-flags-firefox/updates.json)
+[Firefox update manifest](https://perennialtech.github.io/firefox-extensions/updates.json)
 from the latest signed release of **each** extension, then deploys it to
-GitHub Pages. This preserves the update URL and signed-release history of X
-Account Location Flags while allowing Reddit Direct Images to update
-independently. Unsigned or draft releases are not published as updates.
+GitHub Pages. Existing installations using the former
+`/x-account-location-flags-firefox/updates.json` URL are served by the
+[legacy update compatibility site](https://github.com/perennialtech/perennialtech.github.io),
+which periodically synchronizes the published manifest. Unsigned or draft
+releases are not published as updates. The release workflow can also be
+started manually to redeploy Pages without re-signing.
 
 The repository uses the GitHub Actions secrets `AMO_JWT_ISSUER` and
 `AMO_JWT_SECRET` to authenticate to
