@@ -146,6 +146,7 @@ function contentFixture(options = {}) {
   ];
   const locations = options.locations || {};
   const rows = [], links = [], containers = [], handleLinks = [], bioRows = [];
+  const profileBio = [];
 
   function element(attrs = {}) {
     return {
@@ -266,6 +267,25 @@ function contentFixture(options = {}) {
     links.push(display);
     handleLinks.push(handle);
   }
+  if (options.profileDescription) {
+    for (const { href, text } of options.profileDescription) {
+      const link = element({
+        attrs: { href, role: 'link' },
+        textContent: text,
+        getBoundingClientRect: () => bounds({})
+      });
+      const wrapper = element({ children: [link] });
+      link.parentElement = wrapper;
+      profileBio.push({ link, wrapper });
+    }
+    containers.push({
+      matches() { return true; },
+      getAttribute(name) { return name === 'data-testid' ? 'UserDescription' : null; },
+      querySelectorAll(selector) {
+        return selector === 'a[href]' ? profileBio.map(({ link }) => link) : [];
+      }
+    });
+  }
   const document = {
     documentElement: { clientHeight: 800, clientWidth: 900 },
     querySelectorAll: selector => selector.startsWith('[data-testid=')
@@ -299,7 +319,7 @@ function contentFixture(options = {}) {
   });
   const badge = index => rows[index].children.find(node => node.dataset?.xAccountFlag);
   return { calls, listeners, links, handleLinks, rows, containers,
-    badges, badge, bioRows };
+    badges, badge, bioRows, profileBio };
 }
 
 test('all DOM-mounted accounts are prefetched before they enter the viewport', async () => {
@@ -731,6 +751,39 @@ test('UserCell bio location remains inline before @mention across rescans', asyn
   assert.equal(wrapper.children[1], mention.link);
   assert.equal(chip.style.marginInlineStart, '0.25rem');
   assert.equal(chip.style.marginInlineEnd, '0.35rem');
+});
+
+test('profile description mentions render inline without annotating unrelated links', async () => {
+  const f = contentFixture({
+    accounts: [{ type: 'UserName', handle: 'thdxr', name: 'dax' }],
+    profileDescription: [
+      { href: '/opencode', text: '@opencode' },
+      { href: '/anomalyco', text: '@anomalyco' },
+      { href: 'https://t.co/bWom5srB32', text: 'thdxr.com' },
+      { href: '/another', text: '@notanother' }
+    ],
+    locations: { thdxr: 'United States', opencode: 'Japan', anomalyco: 'Pakistan' }
+  });
+  await waitFor(() => f.badge(0)?.textContent === '🇺🇸 USA' &&
+    f.profileBio[0].link.previousElementSibling?.textContent === '🇯🇵 JPN' &&
+    f.profileBio[1].link.previousElementSibling?.textContent === '🇵🇰 PAK');
+  assert.deepEqual(f.calls.map(call => call.username).sort(),
+    ['thdxr', 'opencode', 'anomalyco'].sort());
+  for (const { link, wrapper } of f.profileBio.slice(0, 2)) {
+    assert.equal(wrapper.children[0].dataset.xAccountFlag, 'true');
+    assert.equal(wrapper.children[1], link);
+    assert.equal(wrapper.children[0].style.marginInlineStart, '0.25rem');
+    assert.equal(wrapper.style.flexDirection, undefined);
+  }
+  assert.equal(f.profileBio[2].wrapper.children.length, 1);
+  assert.equal(f.profileBio[3].wrapper.children.length, 1);
+  const chips = f.profileBio.slice(0, 2).map(({ link }) => link.previousElementSibling);
+  f.listeners.get('scroll')();
+  await new Promise(resolve => setTimeout(resolve, 120));
+  assert.deepEqual(f.profileBio.slice(0, 2).map(({ link }) => link.previousElementSibling),
+    chips);
+  assert.equal(f.profileBio[0].wrapper.children.length, 2);
+  assert.equal(f.profileBio[1].wrapper.children.length, 2);
 });
 
 test('quoted-post header with plain-text name and tabindex handle renders location', async () => {

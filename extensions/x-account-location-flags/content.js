@@ -2,7 +2,8 @@
 (() => {
   'use strict';
 
-  const USER_SELECTOR = '[data-testid="User-Name"], [data-testid="UserName"], [data-testid="UserCell"]';
+  const USER_SELECTOR = '[data-testid="User-Name"], [data-testid="UserName"], ' +
+    '[data-testid="UserCell"], [data-testid="UserDescription"]';
   // X assigns its font to the name elements, not always their parent row.
   // Our sibling chips must not inherit Firefox's default serif font.
   const CHIP_FONT_FAMILY = 'TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
@@ -185,6 +186,7 @@
     const found = [];
     const seen = new Set();
     for (const container of containers) {
+      const type = container.getAttribute?.('data-testid');
       // UserCell also contains bio links. Only decorate the account header,
       // identified by a display-name link AND its matching @handle link.
       const links = [...container.querySelectorAll('a[href]')];
@@ -215,7 +217,7 @@
       }
       // Quoted posts have a plain-text name and a tabindex=-1 handle wrapper,
       // not the profile links used in normal tweet headers and UserCells.
-      if (!foundHeader && container.getAttribute?.('data-testid') !== 'UserCell') {
+      if (!foundHeader && type !== 'UserCell' && type !== 'UserDescription') {
         const handle = [...container.querySelectorAll('[tabindex="-1"]')]
           .map(node => /^@([a-zA-Z0-9_]{1,15})$/.exec(node.textContent.trim()))
           .find(Boolean);
@@ -229,11 +231,12 @@
           }
         }
       }
-      // UserCell biographies can contain @mentions with their own locations.
-      // Keep those as inline annotations, but never mistake them for the
-      // card's account identity or move them into the display-name row.
-      if (container.getAttribute?.('data-testid') === 'UserCell') {
-        for (const link of container.querySelectorAll('div[dir="auto"] a[href]')) {
+      // UserCell biographies and profile descriptions contain @mentions with
+      // their own locations, separate from the displayed account identity.
+      if (type === 'UserCell' || type === 'UserDescription') {
+        const bioLinks = type === 'UserCell'
+          ? container.querySelectorAll('div[dir="auto"] a[href]') : links;
+        for (const link of bioLinks) {
           const path = link.getAttribute('href') || '';
           const match = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(path);
           if (!match || link.textContent.trim().toLowerCase() !== '@' + match[1].toLowerCase()) continue;

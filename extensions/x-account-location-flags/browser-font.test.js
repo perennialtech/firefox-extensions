@@ -93,3 +93,72 @@ test('Firefox computes sans-serif fonts for all chip placements under serif pare
       document.querySelector(`${selector} > [data-x-account-flag="true"]`) ===
         window.originalChips[i]), selectors), true);
   });
+
+test('Firefox renders location tags for mentions in a profile description',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <!doctype html>
+      <section>
+        <div data-testid="UserName">
+          <div id="owner-row"><div dir="ltr">dax</div></div>
+          <div tabindex="-1"><div dir="ltr">@thdxr</div></div>
+        </div>
+        <div data-testid="UserDescription">
+          <div dir="auto">
+            building
+            <div style="display: inline"><span id="opencode">
+              <a href="/opencode" role="link">@opencode</a>
+            </span></div>
+            at <div style="display: inline"><span id="anomalyco">
+              <a href="/anomalyco" role="link">@anomalyco</a>
+            </span></div>
+          </div>
+        </div>
+        <div data-testid="UserProfileHeader_Items">
+          <a href="https://t.co/bWom5srB32" data-testid="UserUrl">thdxr.com</a>
+        </div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      const locations = { thdxr: 'United States', opencode: 'Japan', anomalyco: 'Pakistan' };
+      window.lookupHandles = [];
+      window.browser = { runtime: { sendMessage: async ({ username }) => {
+        window.lookupHandles.push(username);
+        return { success: true, country: locations[username], accurate: true };
+      } } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.waitForFunction(() =>
+      document.querySelector('#opencode > [data-x-account-flag="true"]') &&
+      document.querySelector('#anomalyco > [data-x-account-flag="true"]') &&
+      document.querySelector('#owner-row > [data-x-account-flag="true"]'));
+    assert.deepEqual((await page.evaluate(() => window.lookupHandles)).sort(),
+      ['thdxr', 'opencode', 'anomalyco'].sort());
+    const snapshot = await page.evaluate(() => {
+      const targets = ['#owner-row', '#opencode', '#anomalyco'];
+      window.originalChips = targets.map(selector =>
+        document.querySelector(`${selector} > [data-x-account-flag="true"]`));
+      return targets.map((selector, i) => ({
+        text: window.originalChips[i].textContent,
+        followedBy: window.originalChips[i].nextElementSibling?.textContent.trim()
+      }));
+    });
+    assert.deepEqual(snapshot, [
+      { text: '🇺🇸 USA', followedBy: 'dax' },
+      { text: '🇯🇵 JPN', followedBy: '@opencode' },
+      { text: '🇵🇰 PAK', followedBy: '@anomalyco' }
+    ]);
+    assert.equal(await page.locator('[data-testid="UserUrl"] [data-x-account-flag]').count(), 0);
+    await page.evaluate(() => window.dispatchEvent(new Event('scroll')));
+    await page.waitForTimeout(150);
+    assert.equal(await page.evaluate(() => {
+      const targets = ['#owner-row', '#opencode', '#anomalyco'];
+      return targets.every((selector, i) =>
+        document.querySelectorAll(`${selector} > [data-x-account-flag="true"]`).length === 1 &&
+        document.querySelector(`${selector} > [data-x-account-flag="true"]`) ===
+          window.originalChips[i]);
+    }), true);
+  });
