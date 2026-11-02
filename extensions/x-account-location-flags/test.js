@@ -153,6 +153,8 @@ function contentFixture(options = {}) {
       ...attrs,
       dataset: attrs.dataset || {}, style: attrs.style || {},
       parentElement: null,
+      get firstChild() { return this.children?.[0] || null; },
+      get firstElementChild() { return this.children?.[0] || null; },
       get nextElementSibling() {
         const children = this.parentElement?.children || [];
         return children[children.indexOf(this) + 1] || null;
@@ -288,8 +290,8 @@ function contentFixture(options = {}) {
   }
   const document = {
     documentElement: { clientHeight: 800, clientWidth: 900 },
-    querySelectorAll: selector => selector.startsWith('[data-testid=')
-      ? containers : [],
+    querySelectorAll: selector => selector.startsWith('[data-testid=') &&
+      !selector.includes(' > ') ? containers : [],
     addEventListener(name, fn) { listeners.set(name, fn); },
     createElement: () => element({ textContent: '' })
   };
@@ -765,26 +767,26 @@ test('profile description mentions render inline without annotating unrelated li
     locations: { thdxr: 'United States', opencode: 'Japan', anomalyco: 'Pakistan' }
   });
   await waitFor(() => f.badge(0)?.textContent === '🇺🇸 USA' &&
-    f.profileBio[0].link.previousElementSibling?.textContent === '🇯🇵 JPN' &&
-    f.profileBio[1].link.previousElementSibling?.textContent === '🇵🇰 PAK');
+    f.profileBio[0].link.firstElementChild?.textContent === '🇯🇵 JPN' &&
+    f.profileBio[1].link.firstElementChild?.textContent === '🇵🇰 PAK');
   assert.deepEqual(f.calls.map(call => call.username).sort(),
     ['thdxr', 'opencode', 'anomalyco'].sort());
   for (const { link, wrapper } of f.profileBio.slice(0, 2)) {
-    assert.equal(wrapper.children[0].dataset.xAccountFlag, 'true');
-    assert.equal(wrapper.children[1], link);
-    assert.equal(wrapper.children[0].style.marginInlineStart, '0.25rem');
-    assert.equal(wrapper.style.display, 'inline-flex');
-    assert.equal(wrapper.style.flexDirection, undefined);
+    assert.equal(wrapper.children.length, 1);
+    assert.equal(wrapper.children[0], link);
+    assert.equal(link.firstElementChild.dataset.xAccountFlag, 'true');
+    assert.equal(link.firstElementChild.style.marginInlineStart, '0.25rem');
+    assert.equal(link.style.display, 'inline-flex');
+    assert.equal(wrapper.style.display, undefined);
   }
-  assert.equal(f.profileBio[2].wrapper.children.length, 1);
-  assert.equal(f.profileBio[3].wrapper.children.length, 1);
-  const chips = f.profileBio.slice(0, 2).map(({ link }) => link.previousElementSibling);
+  assert.equal(f.profileBio[2].link.children?.length || 0, 0);
+  assert.equal(f.profileBio[3].link.children?.length || 0, 0);
+  const chips = f.profileBio.slice(0, 2).map(({ link }) => link.firstElementChild);
   f.listeners.get('scroll')();
   await new Promise(resolve => setTimeout(resolve, 120));
-  assert.deepEqual(f.profileBio.slice(0, 2).map(({ link }) => link.previousElementSibling),
-    chips);
-  assert.equal(f.profileBio[0].wrapper.children.length, 2);
-  assert.equal(f.profileBio[1].wrapper.children.length, 2);
+  assert.deepEqual(f.profileBio.slice(0, 2).map(({ link }) => link.firstElementChild), chips);
+  assert.equal(f.profileBio[0].link.children.length, 1);
+  assert.equal(f.profileBio[1].link.children.length, 1);
 });
 
 test('quoted-post header with plain-text name and tabindex handle renders location', async () => {

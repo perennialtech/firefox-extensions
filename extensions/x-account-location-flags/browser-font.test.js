@@ -132,18 +132,21 @@ test('Firefox renders location tags for mentions in a profile description',
     });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
     await page.waitForFunction(() =>
-      document.querySelector('#opencode > [data-x-account-flag="true"]') &&
-      document.querySelector('#anomalyco > [data-x-account-flag="true"]') &&
+      document.querySelector('#opencode > a > [data-x-account-flag="true"]') &&
+      document.querySelector('#anomalyco > a > [data-x-account-flag="true"]') &&
       document.querySelector('#owner-row > [data-x-account-flag="true"]'));
     assert.deepEqual((await page.evaluate(() => window.lookupHandles)).sort(),
       ['thdxr', 'opencode', 'anomalyco'].sort());
     const snapshot = await page.evaluate(() => {
-      const targets = ['#owner-row', '#opencode', '#anomalyco'];
-      window.originalChips = targets.map(selector =>
-        document.querySelector(`${selector} > [data-x-account-flag="true"]`));
-      return targets.map((selector, i) => ({
-        text: window.originalChips[i].textContent,
-        followedBy: window.originalChips[i].nextElementSibling?.textContent.trim()
+      const targets = ['#owner-row > [data-x-account-flag]',
+        '#opencode > a > [data-x-account-flag]',
+        '#anomalyco > a > [data-x-account-flag]'];
+      window.originalChips = targets.map(selector => document.querySelector(selector));
+      return window.originalChips.map(chip => ({
+        text: chip.textContent,
+        followedBy: chip.parentElement.tagName === 'A'
+          ? chip.parentElement.textContent.replace(chip.textContent, '').trim()
+          : chip.nextElementSibling.textContent.trim()
       }));
     });
     assert.deepEqual(snapshot, [
@@ -154,25 +157,26 @@ test('Firefox renders location tags for mentions in a profile description',
     assert.equal(await page.locator('[data-testid="UserUrl"] [data-x-account-flag]').count(), 0);
     const keepsMentionsTogether = await page.evaluate(() =>
       ['#opencode', '#anomalyco'].every(selector => {
-        const wrapper = document.querySelector(selector);
-        const chip = wrapper.querySelector('[data-x-account-flag]');
-        const mention = wrapper.querySelector('a[href]');
+        const mention = document.querySelector(`${selector} a[href]`);
+        const chip = mention.querySelector('[data-x-account-flag]');
+        const text = document.createRange();
+        text.selectNodeContents(mention.lastChild);
         const a = chip.getBoundingClientRect();
-        const b = mention.getBoundingClientRect();
+        const b = text.getBoundingClientRect();
         return a.top < b.bottom && b.top < a.bottom;
       }));
     assert.equal(keepsMentionsTogether, true, 'tags must stay on the same line as mentions');
     await page.evaluate(() => window.dispatchEvent(new Event('scroll')));
     await page.waitForTimeout(150);
     assert.equal(await page.evaluate(() => {
-      const targets = ['#owner-row', '#opencode', '#anomalyco'];
+      const targets = ['#owner-row > [data-x-account-flag]',
+        '#opencode > a > [data-x-account-flag]',
+        '#anomalyco > a > [data-x-account-flag]'];
       return targets.every((selector, i) =>
-        document.querySelectorAll(`${selector} > [data-x-account-flag="true"]`).length === 1 &&
-        document.querySelector(`${selector} > [data-x-account-flag="true"]`) ===
-          window.originalChips[i]);
+        document.querySelectorAll(selector).length === 1 &&
+        document.querySelector(selector) === window.originalChips[i]);
     }), true);
   });
-
 
 test('Firefox preserves multiple profile mentions sharing an inline parent',
   { timeout: 30_000 }, async t => {
@@ -180,7 +184,7 @@ test('Firefox preserves multiple profile mentions sharing an inline parent',
     t.after(() => browser.close());
     const page = await browser.newPage();
     await page.setContent(`
-      <div data-testid="UserDescription">
+      <div data-testid="UserDescription" style="width: 160px">
         <div dir="auto"><span id="mentions">
           <a href="/opencode" role="link">@opencode</a>
           and <a href="/anomalyco" role="link">@anomalyco</a>
@@ -195,12 +199,36 @@ test('Firefox preserves multiple profile mentions sharing an inline parent',
     });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
     await page.waitForTimeout(450);
-    assert.deepEqual(await page.locator('#mentions > [data-x-account-flag]')
-      .evaluateAll(nodes => nodes.map(node => node.dataset.xAccountHandle)),
-    ['opencode', 'anomalyco']);
+    const handles = () => page.locator('#mentions a > [data-x-account-flag]')
+      .evaluateAll(nodes => nodes.map(node => node.dataset.xAccountHandle));
+    assert.deepEqual(await handles(), ['opencode', 'anomalyco']);
+    assert.equal(await page.evaluate(() => {
+      const bio = document.querySelector('[data-testid="UserDescription"]');
+      return bio.scrollWidth <= bio.clientWidth + 1;
+    }), true, 'profile mentions should wrap without overflowing');
+    await page.evaluate(() => {
+      const links = document.querySelectorAll('#mentions a');
+      links[1].href = '/opencode';
+      links[1].lastChild.textContent = '@opencode';
+    });
+    await page.waitForFunction(() => {
+      const chips = document.querySelectorAll('#mentions a > [data-x-account-flag]');
+      return chips.length === 2 && [...chips].every(chip =>
+        chip.dataset.xAccountHandle === 'opencode' && chip.textContent === '🇯🇵 JPN');
+    });
+    const originalChips = await page.locator('#mentions a > [data-x-account-flag]')
+      .evaluateAll(nodes => nodes.map(node => node.textContent));
     await page.evaluate(() => window.dispatchEvent(new Event('scroll')));
+    await page.waitForTimeout(300);
+    assert.deepEqual(await handles(), ['opencode', 'opencode']);
+    assert.deepEqual(await page.locator('#mentions a > [data-x-account-flag]')
+      .allTextContents(), originalChips);
+    await page.evaluate(() => document.querySelector('#mentions a').remove());
     await page.waitForTimeout(150);
-    assert.deepEqual(await page.locator('#mentions > [data-x-account-flag]')
-      .evaluateAll(nodes => nodes.map(node => node.dataset.xAccountHandle)),
-    ['opencode', 'anomalyco']);
+    assert.deepEqual(await handles(), ['opencode']);
+    assert.equal(await page.locator('#mentions [data-x-account-flag]').count(), 1);
+    await page.evaluate(() => document.querySelector('#mentions a').removeAttribute('href'));
+    await page.waitForFunction(() =>
+      document.querySelectorAll('#mentions [data-x-account-flag]').length === 0);
+    assert.equal(await page.locator('#mentions [data-x-account-flag]').count(), 0);
   });

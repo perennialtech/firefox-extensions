@@ -179,6 +179,13 @@
     return southAsianCountries.has(countries.get(key)) || regionCodes.get(key) === '034';
   }
 
+  function mentionText(link) {
+    // Ignore location chips injected into profile links when matching @handles.
+    return (link.childNodes ? [...link.childNodes]
+      .filter(node => node.dataset?.xAccountFlag !== 'true')
+      .map(node => node.textContent).join('') : link.textContent).trim();
+  }
+
   function findHandles(root = document) {
     const containers = [];
     if (root.matches?.(USER_SELECTOR)) containers.push(root);
@@ -239,10 +246,11 @@
         for (const link of bioLinks) {
           const path = link.getAttribute('href') || '';
           const match = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(path);
-          if (!match || link.textContent.trim().toLowerCase() !== '@' + match[1].toLowerCase()) continue;
+          if (!match || mentionText(link).toLowerCase() !== '@' + match[1].toLowerCase()) continue;
           if (seen.has(link)) continue;
           seen.add(link);
-          found.push({ link, username: match[1].toLowerCase(), placement: 'mention' });
+          found.push({ link, username: match[1].toLowerCase(),
+            placement: type === 'UserDescription' ? 'profile-mention' : 'mention' });
         }
       }
     }
@@ -257,13 +265,14 @@
   }
 
   function paint({ link, username, placement }, entry) {
-    // Keep bio badges inside X's inline mention span. A sibling of that span
-    // can be laid out as a separate block and appear on the next line.
-    const row = link.parentElement;
+    // Profile descriptions can contain multiple mentions in one inline span.
+    // Place each chip inside its link so it wraps with that mention, without
+    // reparenting React's link or changing the surrounding bio layout.
+    const profileMention = placement === 'profile-mention';
+    const row = profileMention ? link : link.parentElement;
     if (!row) return;
-    const existing = [...row.children].filter(child =>
-      child.dataset?.xAccountFlag === 'true' &&
-      (placement === 'header' || child.dataset.xAccountHandle === username));
+    const existing = [...(row.children || [])].filter(child =>
+      child.dataset?.xAccountFlag === 'true');
     let badge = existing.find(child => child.dataset.xAccountHandle === username);
     for (const old of existing) if (old !== badge) old.remove();
     const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
@@ -287,18 +296,23 @@
       badge.style.height = '1.25rem';
     }
     badge.style.marginInlineEnd = '0.35rem';
-    badge.style.marginInlineStart = placement === 'mention' ? '0.25rem' : '0';
-    if (placement === 'header') {
-      // X's inner display-name wrapper defaults to a flex column.
-      // Preserve React's anchor but lay its siblings out horizontally.
-      row.style.flexDirection = 'row';
-      row.style.alignItems = 'center';
+    badge.style.marginInlineStart = placement === 'header' ? '0' : '0.25rem';
+    if (profileMention) {
+      link.style.display = 'inline-flex';
+      link.style.alignItems = 'center';
+      link.style.whiteSpace = 'nowrap';
+      if (badge.parentElement !== link || badge !== link.firstElementChild) {
+        link.insertBefore(badge, link.firstChild);
+      }
     } else {
-      // Keep the location chip and its @mention on the same line.
-      row.style.display = 'inline-flex';
-    }
-    if (badge.parentElement !== row || badge.nextElementSibling !== link) {
-      row.insertBefore(badge, link);
+      if (placement === 'header') {
+        // X's inner display-name wrapper defaults to a flex column.
+        row.style.flexDirection = 'row';
+        row.style.alignItems = 'center';
+      }
+      if (badge.parentElement !== row || badge.nextElementSibling !== link) {
+        row.insertBefore(badge, link);
+      }
     }
 
     if (badge.textContent !== display) badge.textContent = display;
@@ -395,6 +409,12 @@
 
   function scan() {
     const items = findHandles();
+    const profileLinks = new Set(items.filter(item => item.placement === 'profile-mention')
+      .map(item => item.link));
+    for (const badge of document.querySelectorAll(
+      '[data-testid="UserDescription"] a > [data-x-account-flag="true"]')) {
+      if (!profileLinks.has(badge.parentElement)) badge.remove();
+    }
     const mountedNames = new Set(items.map(item => item.username));
     // React unmounts virtualized rows; discard queued work for removed rows.
     for (let i = queue.length - 1; i >= 0; i--) {
@@ -439,7 +459,8 @@
   window.addEventListener('scroll', scheduleScan, true);
   window.addEventListener('resize', scheduleScan);
   new MutationObserver(scheduleScan).observe(document.documentElement, {
-    childList: true, subtree: true
+    childList: true, subtree: true, attributes: true, attributeFilter: ['href'],
+    characterData: true
   });
   scan();
 })();
