@@ -106,7 +106,7 @@ test('Firefox renders location tags for mentions in a profile description',
           <div id="owner-row"><div dir="ltr">dax</div></div>
           <div tabindex="-1"><div dir="ltr">@thdxr</div></div>
         </div>
-        <div data-testid="UserDescription">
+        <div data-testid="UserDescription" style="width: 160px">
           <div dir="auto">
             building
             <div style="display: inline"><span id="opencode">
@@ -152,6 +152,16 @@ test('Firefox renders location tags for mentions in a profile description',
       { text: '🇵🇰 PAK', followedBy: '@anomalyco' }
     ]);
     assert.equal(await page.locator('[data-testid="UserUrl"] [data-x-account-flag]').count(), 0);
+    const keepsMentionsTogether = await page.evaluate(() =>
+      ['#opencode', '#anomalyco'].every(selector => {
+        const wrapper = document.querySelector(selector);
+        const chip = wrapper.querySelector('[data-x-account-flag]');
+        const mention = wrapper.querySelector('a[href]');
+        const a = chip.getBoundingClientRect();
+        const b = mention.getBoundingClientRect();
+        return a.top < b.bottom && b.top < a.bottom;
+      }));
+    assert.equal(keepsMentionsTogether, true, 'tags must stay on the same line as mentions');
     await page.evaluate(() => window.dispatchEvent(new Event('scroll')));
     await page.waitForTimeout(150);
     assert.equal(await page.evaluate(() => {
@@ -161,4 +171,36 @@ test('Firefox renders location tags for mentions in a profile description',
         document.querySelector(`${selector} > [data-x-account-flag="true"]`) ===
           window.originalChips[i]);
     }), true);
+  });
+
+
+test('Firefox preserves multiple profile mentions sharing an inline parent',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div data-testid="UserDescription">
+        <div dir="auto"><span id="mentions">
+          <a href="/opencode" role="link">@opencode</a>
+          and <a href="/anomalyco" role="link">@anomalyco</a>
+        </span></div>
+      </div>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async ({ username }) => ({
+        success: true, country: username === 'opencode' ? 'Japan' : 'Pakistan',
+        accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.waitForTimeout(450);
+    assert.deepEqual(await page.locator('#mentions > [data-x-account-flag]')
+      .evaluateAll(nodes => nodes.map(node => node.dataset.xAccountHandle)),
+    ['opencode', 'anomalyco']);
+    await page.evaluate(() => window.dispatchEvent(new Event('scroll')));
+    await page.waitForTimeout(150);
+    assert.deepEqual(await page.locator('#mentions > [data-x-account-flag]')
+      .evaluateAll(nodes => nodes.map(node => node.dataset.xAccountHandle)),
+    ['opencode', 'anomalyco']);
   });

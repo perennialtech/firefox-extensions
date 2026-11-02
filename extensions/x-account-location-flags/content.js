@@ -261,7 +261,9 @@
     // can be laid out as a separate block and appear on the next line.
     const row = link.parentElement;
     if (!row) return;
-    const existing = [...row.children].filter(child => child.dataset?.xAccountFlag === 'true');
+    const existing = [...row.children].filter(child =>
+      child.dataset?.xAccountFlag === 'true' &&
+      (placement === 'header' || child.dataset.xAccountHandle === username));
     let badge = existing.find(child => child.dataset.xAccountHandle === username);
     for (const old of existing) if (old !== badge) old.remove();
     const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
@@ -291,6 +293,9 @@
       // Preserve React's anchor but lay its siblings out horizontally.
       row.style.flexDirection = 'row';
       row.style.alignItems = 'center';
+    } else {
+      // Keep the location chip and its @mention on the same line.
+      row.style.display = 'inline-flex';
     }
     if (badge.parentElement !== row || badge.nextElementSibling !== link) {
       row.insertBefore(badge, link);
