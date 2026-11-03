@@ -1,0 +1,8 @@
+/* Keep each tagged profile mention together without changing X's inline styles. */
+[data-testid="UserDescription"] a:has(> [data-x-account-flag="true"]) {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
