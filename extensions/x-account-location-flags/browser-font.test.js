@@ -775,3 +775,89 @@ test('Firefox keeps quoted-post name badges ahead of affiliation images',
       assert.equal(await page.locator(selector + ' [data-x-account-flag]').count(), 0);
     }
   });
+
+test('Firefox ignores emoji-bearing avatar and affiliation decorations before names',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserName">
+        <div id="avatar-row" class="user-avatar"><div dir="ltr">
+          <img alt="⚡️"></div></div>
+        <div id="real-name"><div dir="ltr">Alice</div></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+      <section data-testid="User-Name">
+        <div id="quote-row"><div dir="ltr">
+          <img alt="✨ affiliation"></div></div>
+        <div id="tweet-name"><div dir="ltr">Bob</div></div>
+        <div tabindex="-1"><div dir="ltr">@Bob</div></div>
+      </section>
+      <section data-testid="User-Name">
+        <div id="affiliation-icon" data-testid="AffiliationBadge"><div dir="ltr">
+          <img alt="✨"></div></div>
+        <div id="emoji-real-name"><div dir="ltr"><img alt="⚡️"></div></div>
+        <div tabindex="-1"><div dir="ltr">@Carol</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    const expected = ['#real-name', '#tweet-name', '#emoji-real-name'];
+    await page.waitForFunction(rows => rows.every(row =>
+      document.querySelector(`${row} > [data-x-account-flag="true"]`)), expected);
+    for (const id of expected) {
+      assert.deepEqual(await page.locator(`${id} > [data-x-account-flag]`)
+        .allTextContents(), ['🇯🇵 JPN']);
+    }
+    for (const id of ['#avatar-row', '#quote-row', '#affiliation-icon']) {
+      assert.equal(await page.locator(`${id} [data-x-account-flag]`).count(), 0);
+    }
+  });
+
+test('Firefox restores original header row layout when chips disappear',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="User-Name">
+        <div id="row" style="flex-direction: column; align-items: flex-end">
+          <a id="name" href="/Alice" role="link"><div dir="ltr">Alice</div></a>
+        </div>
+        <a href="/Alice" role="link" tabindex="-1">@Alice</a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    const badge = '#row > [data-x-account-flag]';
+    await page.locator(badge).waitFor();
+    assert.deepEqual(await page.locator('#row').evaluate(row => ({
+      flex: row.style.flexDirection, align: row.style.alignItems
+    })), { flex: 'row', align: 'center' });
+
+    await page.evaluate(() => document.querySelector('#name').removeAttribute('href'));
+    await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
+    assert.deepEqual(await page.locator('#row').evaluate(row => ({
+      flex: row.style.flexDirection, align: row.style.alignItems
+    })), { flex: 'column', align: 'flex-end' });
+
+    await page.evaluate(() => document.querySelector('#name').href = '/Alice');
+    await page.locator(badge).waitFor();
+    assert.deepEqual(await page.locator('#row').evaluate(row => ({
+      flex: row.style.flexDirection, align: row.style.alignItems
+    })), { flex: 'row', align: 'center' });
+    await page.evaluate(() => document.querySelector('#name').removeAttribute('href'));
+    await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
+    assert.deepEqual(await page.locator('#row').evaluate(row => ({
+      flex: row.style.flexDirection, align: row.style.alignItems
+    })), { flex: 'column', align: 'flex-end' });
+  });

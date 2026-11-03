@@ -14,6 +14,9 @@
   const urgent = new Set();
   const inFlight = new Set();
   const queue = [];
+  // Header chips temporarily alter the containing name row's inline layout.
+  // Track only currently decorated rows so reused or detached rows are restored.
+  const headerRowStyles = new Map();
   const regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
   // ISO 3166-1 alpha-2 -> alpha-3 (iso-codes project). Limit country
   // lookups to assigned ISO codes: CLDR also names non-country regions.
@@ -191,12 +194,69 @@
     // in an avatar or affiliation is not evidence of a display name.
     return [...(node.querySelectorAll?.('img[alt]') || [])]
       .some(img => /(?:[\p{Extended_Pictographic}\p{Regional_Indicator}]|[0-9#*]\uFE0F?\u20E3)/u
-        .test(img.getAttribute('alt') || ''));
+        .test(img.getAttribute('alt') || '') &&
+        !/\p{L}/u.test(img.getAttribute('alt') || ''));
   }
 
   function hasDisplayName(node) {
     const text = node.textContent.trim();
     return (text && !text.startsWith('@')) || hasEmojiNameImage(node);
+  }
+
+  function isNameCandidate(node) {
+    // These decorations can themselves contain an emoji; that alone does not
+    // make them the account display name. Inspect ancestors as well as the
+    // image, since X often wraps avatar and affiliation artwork in div[dir=ltr].
+    if (node.closest?.('[data-testid*="Avatar" i], [data-testid*="Affiliat" i], ' +
+      '[class*="avatar" i], [class*="affiliat" i], [id*="avatar" i], [id*="affiliat" i]')) {
+      return false;
+    }
+    if (node.querySelector?.('img[src*="/profile_images/"]')) return false;
+    if (/\baffiliat(?:ed|ion|e)\b/i.test(node.textContent)) return false;
+    return hasDisplayName(node);
+  }
+
+  function styleHeaderRow(row) {
+    if (!headerRowStyles.has(row)) {
+      headerRowStyles.set(row, {
+        flexDirection: row.style.flexDirection,
+        alignItems: row.style.alignItems,
+        flexPriority: row.style.getPropertyPriority?.('flex-direction') || '',
+        alignPriority: row.style.getPropertyPriority?.('align-items') || ''
+      });
+    }
+    row.style.flexDirection = 'row';
+    row.style.alignItems = 'center';
+  }
+
+  function restoreHeaderRow(row) {
+    const original = headerRowStyles.get(row);
+    if (!original) return;
+    for (const [name, property, priority] of [
+      ['flexDirection', 'flex-direction', 'flexPriority'],
+      ['alignItems', 'align-items', 'alignPriority']
+    ]) {
+      if (original[name]) {
+        if (row.style.setProperty) {
+          row.style.setProperty(property, original[name], original[priority]);
+        } else {
+          row.style[name] = original[name];
+        }
+      } else if (row.style.removeProperty) {
+        row.style.removeProperty(property);
+      } else {
+        delete row.style[name];
+      }
+    }
+    headerRowStyles.delete(row);
+  }
+
+  function restoreUnusedHeaderRows() {
+    for (const row of headerRowStyles.keys()) {
+      if (![...(row.children || [])].some(child => child.dataset?.xAccountFlag === 'true')) {
+        restoreHeaderRow(row);
+      }
+    }
   }
 
   function findHandles(root = document) {
@@ -253,7 +313,10 @@
             node.textContent.trim().toLowerCase() === '@' + handle[1].toLowerCase());
           const candidates = handleIndex < 0 ? nameNodes : nameNodes.slice(0, handleIndex);
           // The display name comes before affiliation and other metadata.
-          const name = candidates.find(node => hasDisplayName(node));
+          // This fallback is only for plain-text names. If React removes an
+          // account link's href while recycling a row, descendants inside that
+          // link must not become a second, fake display-name match.
+          const name = candidates.find(node => !node.closest?.('a') && isNameCandidate(node));
           if (name && !seen.has(name)) {
             seen.add(name);
             found.push({ link: name, username: handle[1].toLowerCase(), placement: 'header' });
@@ -344,6 +407,7 @@
     // Pending, empty and failed lookups do not create placeholder elements.
     if (!display) {
       badge?.remove();
+      restoreUnusedHeaderRows();
       return;
     }
     if (!badge) {
@@ -373,8 +437,7 @@
     } else {
       if (placement === 'header') {
         // X's inner display-name wrapper defaults to a flex column.
-        row.style.flexDirection = 'row';
-        row.style.alignItems = 'center';
+        styleHeaderRow(row);
       }
       if (badge.parentElement !== row || badge.nextElementSibling !== link) {
         row.insertBefore(badge, link);
@@ -489,6 +552,7 @@
         badge.remove();
       }
     }
+    restoreUnusedHeaderRows();
     const mountedNames = new Set(items.map(item => item.username));
     // React unmounts virtualized rows; discard queued work for removed rows.
     for (let i = queue.length - 1; i >= 0; i--) {
