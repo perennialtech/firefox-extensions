@@ -215,9 +215,11 @@
         }
       }
       let foundHeader = false;
-      for (const link of links) {
+      // Prefer the link nearest the @handle, not an earlier avatar link.
+      for (const link of [...links].reverse()) {
         if (link.getAttribute('tabindex') === '-1') continue;
         if (link.getAttribute('role') !== 'link') continue;
+        if (link.closest?.('[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]')) continue;
         const path = link.getAttribute('href');
         const match = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(path || '');
         if (!match || !handles.has(match[1].toLowerCase())) continue;
@@ -236,8 +238,11 @@
           .map(node => /^@([a-zA-Z0-9_]{1,15})$/.exec(node.textContent.trim()))
           .find(Boolean);
         if (handle) {
-          const name = [...container.querySelectorAll('div[dir="ltr"]')]
-            .find(node => hasDisplayName(node));
+          const nameNodes = [...container.querySelectorAll('div[dir="ltr"]')];
+          const handleIndex = nameNodes.findIndex(node =>
+            node.textContent.trim().toLowerCase() === '@' + handle[1].toLowerCase());
+          const name = (handleIndex < 0 ? nameNodes : nameNodes.slice(0, handleIndex))
+            .findLast(node => hasDisplayName(node));
           if (name && !seen.has(name)) {
             seen.add(name);
             found.push({ link: name, username: handle[1].toLowerCase(), placement: 'header' });
@@ -417,10 +422,19 @@
 
   function scan() {
     const items = findHandles();
-    const profileLinks = new Set(items.filter(item => item.placement === 'profile-mention')
-      .map(item => item.link));
-    for (const badge of document.querySelectorAll('a > [data-x-account-flag="true"]')) {
-      if (!profileLinks.has(badge.parentElement)) badge.remove();
+    // React can reuse an existing row while its name/handle are being changed.
+    // Reconcile every chip with currently matched names, not just bio links.
+    const validBadges = new Map();
+    for (const item of items) {
+      const row = item.placement === 'profile-mention' ? item.link : item.link.parentElement;
+      if (!row) continue;
+      if (!validBadges.has(row)) validBadges.set(row, new Set());
+      validBadges.get(row).add(item.username);
+    }
+    for (const badge of document.querySelectorAll('[data-x-account-flag="true"]')) {
+      if (!validBadges.get(badge.parentElement)?.has(badge.dataset.xAccountHandle)) {
+        badge.remove();
+      }
     }
     const mountedNames = new Set(items.map(item => item.username));
     // React unmounts virtualized rows; discard queued work for removed rows.
@@ -466,7 +480,7 @@
   window.addEventListener('scroll', scheduleScan, true);
   window.addEventListener('resize', scheduleScan);
   new MutationObserver(scheduleScan).observe(document.documentElement, {
-    childList: true, subtree: true, attributes: true, attributeFilter: ['href'],
+    childList: true, subtree: true, attributes: true, attributeFilter: ['href', 'alt'],
     characterData: true
   });
   scan();

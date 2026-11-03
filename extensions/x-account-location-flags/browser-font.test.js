@@ -442,3 +442,95 @@ test('Firefox renders image-only account names on timeline, post and profile',
       document.querySelectorAll(`${row} > [data-x-account-flag="true"]`).length), rows),
     [1, 1, 1]);
   });
+
+test('Firefox prefers the account name over avatar and unrelated image links',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserCell" id="alice">
+        <div id="avatar-row"><a href="/Alice" role="link"><img alt="Profile photo"></a></div>
+        <div id="alice-name"><a href="/Alice" role="link">Alice</a></div>
+        <a href="/Alice" role="link" tabindex="-1">@Alice</a>
+      </section>
+      <section data-testid="UserCell" id="avatar-only">
+        <div data-testid="UserAvatar-Container-Bob">
+          <a href="/Bob" role="link"><img alt="Profile photo"></a>
+        </div>
+        <a href="/Bob" role="link" tabindex="-1">@Bob</a>
+      </section>
+      <section data-testid="UserName" id="profile">
+        <div id="misc-row"><div dir="ltr"><img alt="Unrelated icon"></div></div>
+        <div id="profile-name"><div dir="ltr"><img alt="⚡️"></div></div>
+        <div tabindex="-1"><div dir="ltr">@_voltcrash</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.lookupHandles = [];
+      window.browser = { runtime: { sendMessage: async ({ username }) => {
+        window.lookupHandles.push(username);
+        return { success: true, country: 'India', accurate: true };
+      } } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.waitForFunction(() =>
+      document.querySelector('#alice-name > [data-x-account-flag]') &&
+      document.querySelector('#profile-name > [data-x-account-flag]'));
+    assert.equal(await page.locator('#avatar-row [data-x-account-flag]').count(), 0);
+    assert.equal(await page.locator('#avatar-only [data-x-account-flag]').count(), 0);
+    assert.equal(await page.locator('#misc-row [data-x-account-flag]').count(), 0);
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles.sort()),
+      ['_voltcrash', 'alice']);
+  });
+
+test('Firefox reconciles reused name rows and observes emoji alt changes',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="User-Name">
+        <div id="name-row"><a id="name" href="/Alice" role="link">
+          <div dir="ltr"><img id="emoji" alt="⚡️"></div>
+        </a></div>
+        <a id="handle" href="/Alice" role="link" tabindex="-1">
+          <div dir="ltr">@Alice</div>
+        </a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.lookupHandles = [];
+      window.browser = { runtime: { sendMessage: async ({ username }) => {
+        window.lookupHandles.push(username);
+        return { success: true,
+          country: username === 'alice' ? 'India' : 'Japan', accurate: true };
+      } } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    const selector = '#name-row > [data-x-account-flag="true"]';
+    await page.locator(selector).waitFor();
+    assert.equal(await page.locator(selector).textContent(), '🇮🇳 IND');
+
+    // React may reuse the element while the new account has no display name.
+    await page.evaluate(() => {
+      document.querySelector('#name').setAttribute('href', '/Bob');
+      document.querySelector('#handle').setAttribute('href', '/Bob');
+      document.querySelector('#handle div').textContent = '@Bob';
+      document.querySelector('#emoji').alt = '';
+    });
+    await page.waitForFunction(() =>
+      !document.querySelector('#name-row > [data-x-account-flag]'));
+    assert.equal(await page.locator(selector).count(), 0);
+
+    // An alt-only update must be sufficient to discover the new display name.
+    await page.evaluate(() => { document.querySelector('#emoji').alt = '⚡️'; });
+    await page.waitForFunction(() =>
+      document.querySelector('#name-row > [data-x-account-flag]')?.textContent === '🇯🇵 JPN');
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['alice', 'bob']);
+
+    await page.evaluate(() => { document.querySelector('#emoji').alt = ''; });
+    await page.waitForFunction(() =>
+      !document.querySelector('#name-row > [data-x-account-flag]'));
+    assert.equal(await page.locator(selector).count(), 0);
+  });
