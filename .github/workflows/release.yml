@@ -4,11 +4,18 @@ on:
   push:
     tags: ['v*', 'reddit-v*']
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing tag to sign and publish (leave empty to redeploy updates)
+        type: string
+        required: false
 
 jobs:
   release:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || inputs.release_tag != ''
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
     timeout-minutes: 30
     permissions:
       contents: write
@@ -16,6 +23,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
@@ -23,7 +31,7 @@ jobs:
         id: extension
         shell: bash
         run: |
-          case "$GITHUB_REF_NAME" in
+          case "$RELEASE_TAG" in
             reddit-v*)
               directory=extensions/reddit-direct-images
               prefix=reddit-v
@@ -36,14 +44,14 @@ jobs:
               ;;
             *) exit 1 ;;
           esac
-          test "$GITHUB_REF_NAME" = "${prefix}$(node -p "require('./$directory/manifest.json').version")"
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+          test "$RELEASE_TAG" = "${prefix}$(node -p "require('./$directory/manifest.json').version")"
+          if ! git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main; then
             echo "Release tag must point to a commit already on main" >&2
             exit 1
           fi
           echo "directory=$directory" >> "$GITHUB_OUTPUT"
           echo "is_reddit=$is_reddit" >> "$GITHUB_OUTPUT"
-          previous=$(git tag --list "${prefix}*" --sort=-version:refname | awk -v current="$GITHUB_REF_NAME" '$0 == current {found = 1; next} found {print; exit}')
+          previous=$(git tag --list "${prefix}*" --sort=-version:refname | awk -v current="$RELEASE_TAG" '$0 == current {found = 1; next} found {print; exit}')
           echo "previous=$previous" >> "$GITHUB_OUTPUT"
       - name: Test both extensions
         run: npm test
@@ -87,12 +95,12 @@ jobs:
           else
             latest=--latest
           fi
-          gh release create "$GITHUB_REF_NAME" "${packages[0]}" \
-            --verify-tag --title "$GITHUB_REF_NAME" "${notes[@]}" "$latest"
+          gh release create "$RELEASE_TAG" "${packages[0]}" \
+            --verify-tag --title "$RELEASE_TAG" "${notes[@]}" "$latest"
 
   deploy:
     needs: release
-    if: always() && (needs.release.result == 'success' || github.event_name == 'workflow_dispatch')
+    if: always() && (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.release_tag == ''))
     runs-on: ubuntu-latest
     concurrency:
       group: firefox-extension-pages
