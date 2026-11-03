@@ -299,6 +299,25 @@
       seen.add(name);
       found.push({ link: name, username, placement: 'header' });
     }
+    // The main header of a public profile is different again: its display
+    // name is an h1 and the matching @handle is plain text, with no profile
+    // links. Scope this to the visited profile route so unrelated headings
+    // and account references elsewhere on the page cannot acquire chips.
+    const profile = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(location.pathname);
+    if (profile) {
+      const username = profile[1].toLowerCase();
+      for (const name of root.querySelectorAll('h1')) {
+        if (name.closest(USER_SELECTOR) || seen.has(name) || !hasDisplayName(name)) continue;
+        const header = name.parentElement?.parentElement;
+        if (!header) continue;
+        const hasHandle = [...header.querySelectorAll('span')].some(node =>
+          node.childElementCount === 0 &&
+          node.textContent.trim().toLowerCase() === '@' + username);
+        if (!hasHandle) continue;
+        seen.add(name);
+        found.push({ link: name, username, placement: 'header' });
+      }
+    }
     return found;
   }
 

@@ -555,6 +555,66 @@ test('Firefox annotates public X name-handle pairs without data-testid container
     assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['_voltcrash', 'alice']);
   });
 
+test('Firefox annotates the plain-text main header of a public X profile',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    // Use a fulfilled X URL to exercise route scoping without remote traffic.
+    await page.route('https://x.com/_voltcrash', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: `
+        <header id="public-profile-main">
+          <div class="min-w-0 flex flex-col items-start">
+            <span id="main-name"><h1 class="text-headline1">⚡️</h1></span>
+            <span><span id="main-handle">@_voltcrash</span></span>
+          </div>
+        </header>
+        <h1 id="login-heading">Log in or sign up for X</h1>
+        <div id="stray-handle"><span>@Alice</span></div>
+      `
+    }));
+    await page.goto('https://x.com/_voltcrash');
+    await page.evaluate(() => {
+      window.lookupHandles = [];
+      window.browser = { runtime: { sendMessage: async ({ username }) => {
+        window.lookupHandles.push(username);
+        return { success: true,
+          country: username === '_voltcrash' ? 'India' : 'Japan', accurate: true };
+      } } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    const badge = '#main-name > [data-x-account-flag="true"]';
+    await page.locator(badge).waitFor();
+    assert.equal(await page.locator(badge).textContent(), '🇮🇳 IND');
+    assert.equal(await page.locator('#main-name > [data-x-account-flag]').count(), 1);
+    assert.equal(await page.locator('#login-heading [data-x-account-flag]').count(), 0);
+    assert.equal(await page.locator('#stray-handle [data-x-account-flag]').count(), 0);
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['_voltcrash']);
+
+    // An image-only keycap name is still a valid main-profile display name.
+    await page.evaluate(() => {
+      document.querySelector('#main-name h1').innerHTML = '<img alt="1️⃣">';
+    });
+    await page.waitForTimeout(200);
+    assert.deepEqual(await page.locator('#main-name > [data-x-account-flag]')
+      .allTextContents(), ['🇮🇳 IND']);
+
+    // A client-side navigation must not leave the old account's badge behind.
+    await page.evaluate(() => {
+      history.pushState({}, '', '/Alice');
+      document.querySelector('#main-handle').textContent = '@Alice';
+    });
+    await page.waitForFunction(selector => {
+      const chip = document.querySelector(selector);
+      return chip?.dataset.xAccountHandle === 'alice' && chip.textContent === '🇯🇵 JPN';
+    }, badge);
+    assert.deepEqual(await page.locator('#main-name > [data-x-account-flag]')
+      .allTextContents(), ['🇯🇵 JPN']);
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles),
+      ['_voltcrash', 'alice']);
+  });
+
 test('Firefox prefers the account name over avatar and unrelated image links',
   { timeout: 30_000 }, async t => {
     const browser = await firefox.launch();
