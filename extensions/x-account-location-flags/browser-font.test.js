@@ -372,3 +372,73 @@ test('Firefox contains long location labels and cleans up reused profile links',
       color: 'rebeccapurple'
     });
   });
+
+test('Firefox renders image-only account names on timeline, post and profile',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section id="timeline" data-testid="User-Name">
+        <div id="timeline-name-row">
+          <a href="/_voltcrash" role="link"><div dir="ltr"><span>
+            <img alt="⚡️" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=">
+          </span></div></a>
+        </div>
+        <a href="/_voltcrash" role="link" tabindex="-1">
+          <div dir="ltr">@_voltcrash</div>
+        </a>
+        <div id="timeline-time" dir="ltr">15h</div>
+      </section>
+      <section id="post" data-testid="User-Name">
+        <div id="post-name-row">
+          <a href="/_voltcrash" role="link"><div dir="ltr"><span>
+            <img alt="⚡️" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=">
+          </span></div></a>
+        </div>
+        <a href="/_voltcrash" role="link" tabindex="-1">
+          <div dir="ltr">@_voltcrash</div>
+        </a>
+        <div dir="ltr">9:59 PM · Nov 2, 2026</div>
+      </section>
+      <section id="profile" data-testid="UserName">
+        <div id="profile-name-row"><div dir="ltr"><span>
+          <img alt="⚡️" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=">
+        </span></div></div>
+        <div tabindex="-1"><div dir="ltr">@_voltcrash</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.lookupHandles = [];
+      window.browser = { runtime: { sendMessage: async ({ username }) => {
+        window.lookupHandles.push(username);
+        return { success: true, country: 'India', accurate: true };
+      } } };
+    });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+
+    const rows = ['#timeline-name-row', '#post-name-row', '#profile-name-row'];
+    await page.waitForFunction(rows => rows.every(row =>
+      document.querySelector(`${row} > [data-x-account-flag="true"]`)), rows);
+    assert.deepEqual(await page.evaluate(rows => rows.map(row => {
+      const nameRow = document.querySelector(row);
+      const chip = nameRow.firstElementChild;
+      return {
+        text: chip.textContent,
+        handle: chip.dataset.xAccountHandle,
+        isFirst: chip.nextElementSibling?.querySelector('img')?.alt === '⚡️',
+        count: nameRow.querySelectorAll('[data-x-account-flag="true"]').length
+      };
+    }), rows), rows.map(() => ({
+      text: '🇮🇳 IND', handle: '_voltcrash', isFirst: true, count: 1
+    })));
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['_voltcrash']);
+    assert.equal(await page.locator('#timeline-time [data-x-account-flag]').count(), 0);
+
+    await page.evaluate(() => window.dispatchEvent(new Event('scroll')));
+    await page.waitForTimeout(200);
+    assert.deepEqual(await page.evaluate(rows => rows.map(row =>
+      document.querySelectorAll(`${row} > [data-x-account-flag="true"]`).length), rows),
+    [1, 1, 1]);
+  });

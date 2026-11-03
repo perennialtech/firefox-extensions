@@ -186,6 +186,13 @@
       .map(node => node.textContent).join('') : link.textContent).trim();
   }
 
+  function hasDisplayName(node) {
+    const text = node.textContent.trim();
+    // X renders emoji-only display names as images, with no textContent.
+    return (text && !text.startsWith('@')) ||
+      !!node.querySelector?.('img[alt]:not([alt=""])');
+  }
+
   function findHandles(root = document) {
     const containers = [];
     if (root.matches?.(USER_SELECTOR)) containers.push(root);
@@ -215,23 +222,22 @@
         const match = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(path || '');
         if (!match || !handles.has(match[1].toLowerCase())) continue;
         // The display-name link is distinct from the handle and avatar links.
-        if (link.textContent.trim().startsWith('@') || !link.textContent.trim()) continue;
+        if (!hasDisplayName(link)) continue;
         if (seen.has(link)) continue;
         seen.add(link);
         found.push({ link, username: match[1].toLowerCase(), placement: 'header' });
         foundHeader = true;
         break;
       }
-      // Quoted posts have a plain-text name and a tabindex=-1 handle wrapper,
-      // not the profile links used in normal tweet headers and UserCells.
+      // Quoted posts and profile headers can have non-link display names and
+      // a tabindex=-1 handle wrapper, unlike regular tweet headers.
       if (!foundHeader && type !== 'UserCell' && type !== 'UserDescription') {
         const handle = [...container.querySelectorAll('[tabindex="-1"]')]
           .map(node => /^@([a-zA-Z0-9_]{1,15})$/.exec(node.textContent.trim()))
           .find(Boolean);
         if (handle) {
           const name = [...container.querySelectorAll('div[dir="ltr"]')]
-            .find(node => node.textContent.trim() &&
-              node.textContent.trim() !== '@' + handle[1]);
+            .find(node => hasDisplayName(node));
           if (name && !seen.has(name)) {
             seen.add(name);
             found.push({ link: name, username: handle[1].toLowerCase(), placement: 'header' });
