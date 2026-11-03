@@ -534,3 +534,72 @@ test('Firefox reconciles reused name rows and observes emoji alt changes',
       !document.querySelector('#name-row > [data-x-account-flag]'));
     assert.equal(await page.locator(selector).count(), 0);
   });
+
+test('Firefox keeps UserCell header badges out of same-account biography links',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserCell">
+        <div id="name-row"><a href="/Alice" role="link">Alice</a></div>
+        <div><a href="/Alice" role="link" tabindex="-1">@Alice</a></div>
+        <div dir="auto" id="bio"><a href="/Alice" role="link">
+          Read Alice's posts</a></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'India', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.locator('#name-row > [data-x-account-flag]').waitFor();
+    assert.equal(await page.locator('#name-row > [data-x-account-flag]').textContent(),
+      '🇮🇳 IND');
+    assert.equal(await page.locator('#bio [data-x-account-flag]').count(), 0);
+    await page.evaluate(() => window.dispatchEvent(new Event('scroll')));
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('#name-row > [data-x-account-flag]').count(), 1);
+    assert.equal(await page.locator('#bio [data-x-account-flag]').count(), 0);
+  });
+
+test('Firefox keeps quoted-post name badges ahead of affiliation images',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="User-Name" id="text-name">
+        <div id="true-name"><div dir="ltr">Alice</div></div>
+        <div id="affiliation"><div dir="ltr">
+          <img alt="Affiliated with ExampleCorp"></div></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+      <section data-testid="User-Name" id="image-name">
+        <div id="unrelated"><div dir="ltr"><img alt="Unrelated icon"></div></div>
+        <div id="emoji-name"><div dir="ltr"><img alt="⚡️"></div></div>
+        <div id="second-affiliation"><div dir="ltr">
+          <img alt="Affiliated with ExampleCorp"></div></div>
+        <div id="text-affiliation"><div dir="ltr">ExampleCorp affiliated</div></div>
+        <div tabindex="-1"><div dir="ltr">@_voltcrash</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async ({ username }) => ({
+        success: true, country: username === 'alice' ? 'Japan' : 'India',
+        accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.waitForFunction(() =>
+      document.querySelector('#true-name > [data-x-account-flag]') &&
+      document.querySelector('#emoji-name > [data-x-account-flag]'));
+    assert.equal(await page.locator('#true-name > [data-x-account-flag]').textContent(),
+      '🇯🇵 JPN');
+    assert.equal(await page.locator('#emoji-name > [data-x-account-flag]').textContent(),
+      '🇮🇳 IND');
+    for (const selector of ['#affiliation', '#unrelated', '#second-affiliation', '#text-affiliation']) {
+      assert.equal(await page.locator(selector + ' [data-x-account-flag]').count(), 0);
+    }
+  });

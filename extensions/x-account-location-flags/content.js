@@ -186,11 +186,17 @@
       .map(node => node.textContent).join('') : link.textContent).trim();
   }
 
+  function hasEmojiNameImage(node) {
+    // X replaces emoji in display names with img elements. An arbitrary image
+    // in an avatar or affiliation is not evidence of a display name.
+    return [...(node.querySelectorAll?.('img[alt]') || [])]
+      .some(img => /[\p{Extended_Pictographic}\p{Regional_Indicator}]/u
+        .test(img.getAttribute('alt') || ''));
+  }
+
   function hasDisplayName(node) {
     const text = node.textContent.trim();
-    // X renders emoji-only display names as images, with no textContent.
-    return (text && !text.startsWith('@')) ||
-      !!node.querySelector?.('img[alt]:not([alt=""])');
+    return (text && !text.startsWith('@')) || hasEmojiNameImage(node);
   }
 
   function findHandles(root = document) {
@@ -204,25 +210,29 @@
       // UserCell also contains bio links. Only decorate the account header,
       // identified by a display-name link AND its matching @handle link.
       const links = [...container.querySelectorAll('a[href]')];
-      const handles = new Set();
-      for (const link of links) {
+      const handles = new Map();
+      for (const [index, link] of links.entries()) {
         if (link.getAttribute('tabindex') !== '-1') continue;
         const value = link.textContent.trim();
         const path = link.getAttribute('href');
         if (!path || !/^@[a-zA-Z0-9_]{1,15}$/.test(value)) continue;
         if (path.toLowerCase() === '/' + value.slice(1).toLowerCase()) {
-          handles.add(value.slice(1).toLowerCase());
+          const username = value.slice(1).toLowerCase();
+          if (!handles.has(username)) handles.set(username, index);
         }
       }
       let foundHeader = false;
       // Prefer the link nearest the @handle, not an earlier avatar link.
-      for (const link of [...links].reverse()) {
+      for (let i = links.length - 1; i >= 0; i--) {
+        const link = links[i];
         if (link.getAttribute('tabindex') === '-1') continue;
         if (link.getAttribute('role') !== 'link') continue;
         if (link.closest?.('[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]')) continue;
         const path = link.getAttribute('href');
         const match = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(path || '');
         if (!match || !handles.has(match[1].toLowerCase())) continue;
+        // Bio links appear after the account's handle in a UserCell.
+        if (i >= handles.get(match[1].toLowerCase())) continue;
         // The display-name link is distinct from the handle and avatar links.
         if (!hasDisplayName(link)) continue;
         if (seen.has(link)) continue;
@@ -241,8 +251,9 @@
           const nameNodes = [...container.querySelectorAll('div[dir="ltr"]')];
           const handleIndex = nameNodes.findIndex(node =>
             node.textContent.trim().toLowerCase() === '@' + handle[1].toLowerCase());
-          const name = (handleIndex < 0 ? nameNodes : nameNodes.slice(0, handleIndex))
-            .findLast(node => hasDisplayName(node));
+          const candidates = handleIndex < 0 ? nameNodes : nameNodes.slice(0, handleIndex);
+          // The display name comes before affiliation and other metadata.
+          const name = candidates.find(node => hasDisplayName(node));
           if (name && !seen.has(name)) {
             seen.add(name);
             found.push({ link: name, username: handle[1].toLowerCase(), placement: 'header' });
