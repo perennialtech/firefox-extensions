@@ -190,7 +190,7 @@
     // X replaces emoji in display names with img elements. An arbitrary image
     // in an avatar or affiliation is not evidence of a display name.
     return [...(node.querySelectorAll?.('img[alt]') || [])]
-      .some(img => /[\p{Extended_Pictographic}\p{Regional_Indicator}]/u
+      .some(img => /(?:[\p{Extended_Pictographic}\p{Regional_Indicator}]|[0-9#*]\uFE0F?\u20E3)/u
         .test(img.getAttribute('alt') || ''));
   }
 
@@ -275,6 +275,29 @@
             placement: type === 'UserDescription' ? 'profile-mention' : 'mention' });
         }
       }
+    }
+    // Public, logged-out X pages render name and handle as adjacent links to
+    // the same profile, without the data-testid containers used above. Match
+    // only within their small shared row: a handle alone (e.g. a biography
+    // mention) or a profile avatar must never be mistaken for a display name.
+    for (const handleLink of root.querySelectorAll('a[href]')) {
+      if (handleLink.closest(USER_SELECTOR)) continue;
+      const path = handleLink.getAttribute('href') || '';
+      const match = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(path);
+      if (!match) continue;
+      const username = match[1].toLowerCase();
+      if (mentionText(handleLink).toLowerCase() !== '@' + username) continue;
+      const row = handleLink.parentElement?.parentElement;
+      if (!row || row === document.body) continue;
+      const links = [...row.querySelectorAll('a[href]')];
+      const index = links.indexOf(handleLink);
+      const name = links.slice(0, index).reverse().find(link =>
+        link.getAttribute('href')?.toLowerCase().replace(/\/$/, '') === '/' + username &&
+        !link.querySelector('.x-avatar, [data-testid="Tweet-User-Avatar"], img[src*="/profile_images/"]') &&
+        hasDisplayName(link));
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      found.push({ link: name, username, placement: 'header' });
     }
     return found;
   }

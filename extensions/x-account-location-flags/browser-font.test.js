@@ -443,6 +443,118 @@ test('Firefox renders image-only account names on timeline, post and profile',
     [1, 1, 1]);
   });
 
+test('Firefox recognises keycap-only emoji image names in every header layout',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    const linked = (id, emoji) => `
+      <section data-testid="User-Name">
+        <div id="${id}"><a href="/Alice" role="link">
+          <div dir="ltr"><img alt="${emoji}"></div>
+        </a></div>
+        <a href="/Alice" role="link" tabindex="-1">@Alice</a>
+      </section>`;
+    await page.setContent(`
+      ${linked('timeline-keycap', '1️⃣')}
+      ${linked('post-keycap', '#️⃣')}
+      <section data-testid="UserName">
+        <div id="profile-keycap"><div dir="ltr"><img alt="*️⃣"></div></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    const rows = ['#timeline-keycap', '#post-keycap', '#profile-keycap'];
+    await page.waitForFunction(rows => rows.every(row =>
+      document.querySelector(`${row} > [data-x-account-flag="true"]`)), rows);
+    for (const row of rows) {
+      assert.deepEqual(await page.locator(`${row} > [data-x-account-flag]`)
+        .allTextContents(), ['🇯🇵 JPN']);
+    }
+  });
+
+test('Firefox annotates public X name-handle pairs without data-testid containers',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    // Faithful to the public logged-out X layout: paired links within a div,
+    // one for the name and one for the handle, with no role or tabindex.
+    await page.setContent(`
+      <section id="public-profile">
+        <div id="profile-pair" class="flex items-center gap-1 min-w-0">
+          <span id="profile-name" class="flex shrink-0">
+            <a href="/_voltcrash" class="x-link">
+              <div class="font-bold text-primary">⚡️</div>
+            </a>
+          </span>
+          <span id="profile-handle" class="flex">
+            <a href="/_voltcrash"><span>@_voltcrash</span></a>
+          </span>
+        </div>
+      </section>
+      <section id="public-post">
+        <div class="flex gap-2">
+          <a href="/_voltcrash"><div class="x-avatar"><img alt="⚡️"></div></a>
+          <div id="post-pair" class="flex flex-col items-start">
+            <span id="post-name"><a href="/_voltcrash" class="x-link">
+              <div class="font-bold text-primary"><img alt="1️⃣"></div>
+            </a></span>
+            <span id="post-handle"><a href="/_voltcrash">
+              <span>@_voltcrash</span>
+            </a></span>
+          </div>
+        </div>
+      </section>
+      <div id="avatar-only">
+        <span><a href="/Bob"><div class="x-avatar"><img alt="⚡️"></div></a></span>
+        <span><a href="/Bob">@Bob</a></span>
+      </div>
+      <div id="bio"><a href="/Alice">@Alice</a></div>
+      <a id="follow" aria-label="Follow" href="/_voltcrash">Follow</a>
+    `);
+    await page.evaluate(() => {
+      window.lookupHandles = [];
+      window.browser = { runtime: { sendMessage: async ({ username }) => {
+        window.lookupHandles.push(username);
+        return { success: true,
+          country: username === 'alice' ? 'Japan' : 'India', accurate: true };
+      } } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    const profile = '#profile-name > [data-x-account-flag="true"]';
+    const post = '#post-name > [data-x-account-flag="true"]';
+    await page.waitForFunction(([a, b]) =>
+      document.querySelector(a) && document.querySelector(b), [profile, post]);
+    assert.equal(await page.locator(profile).textContent(), '🇮🇳 IND');
+    assert.equal(await page.locator(post).textContent(), '🇮🇳 IND');
+    for (const selector of ['#avatar-only', '#bio', '#follow', '#profile-handle', '#post-handle']) {
+      assert.equal(await page.locator(`${selector} [data-x-account-flag]`).count(), 0);
+    }
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['_voltcrash']);
+
+    // React may reuse a public-name row for a different account.
+    await page.evaluate(() => {
+      document.querySelector('#profile-name a').href = '/Alice';
+      document.querySelector('#profile-name a div').textContent = 'Alice';
+      document.querySelector('#profile-handle a').href = '/Alice';
+      document.querySelector('#profile-handle a span').textContent = '@Alice';
+    });
+    await page.waitForFunction(selector => {
+      const chip = document.querySelector(selector);
+      return chip?.dataset.xAccountHandle === 'alice' && chip.textContent === '🇯🇵 JPN';
+    }, profile);
+    assert.equal(await page.locator(post).textContent(), '🇮🇳 IND');
+    assert.deepEqual(await page.locator('#profile-name [data-x-account-flag]')
+      .allTextContents(), ['🇯🇵 JPN']);
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['_voltcrash', 'alice']);
+  });
+
 test('Firefox prefers the account name over avatar and unrelated image links',
   { timeout: 30_000 }, async t => {
     const browser = await firefox.launch();
