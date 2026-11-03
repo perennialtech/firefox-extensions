@@ -200,7 +200,7 @@
 
   function hasDisplayName(node) {
     const text = node.textContent.trim();
-    return (text && !text.startsWith('@')) || hasEmojiNameImage(node);
+    return Boolean(text) || hasEmojiNameImage(node);
   }
 
   function isNameCandidate(node) {
@@ -218,18 +218,15 @@
   function styleHeaderRow(row) {
     if (!headerRowStyles.has(row)) {
       headerRowStyles.set(row, {
-        display: row.style.display,
         flexDirection: row.style.flexDirection,
         alignItems: row.style.alignItems,
-        displayPriority: row.style.getPropertyPriority?.('display') || '',
         flexPriority: row.style.getPropertyPriority?.('flex-direction') || '',
         alignPriority: row.style.getPropertyPriority?.('align-items') || ''
       });
     }
-    // flex-direction has no effect on an inline span or block div. Public X
-    // renders the name inside block children of such wrappers, which would
-    // otherwise force the chip onto its own line.
-    row.style.display = row.tagName === 'SPAN' ? 'inline-flex' : 'flex';
+    // A low-priority CSS rule supplies flex display without defeating X's
+    // own display:none rules (including classes applied after insertion).
+    row.setAttribute?.('data-x-account-flag-header', 'true');
     row.style.flexDirection = 'row';
     row.style.alignItems = 'center';
   }
@@ -237,8 +234,8 @@
   function restoreHeaderRow(row) {
     const original = headerRowStyles.get(row);
     if (!original) return;
+    row.removeAttribute?.('data-x-account-flag-header');
     for (const [name, property, priority] of [
-      ['display', 'display', 'displayPriority'],
       ['flexDirection', 'flex-direction', 'flexPriority'],
       ['alignItems', 'align-items', 'alignPriority']
     ]) {
@@ -320,13 +317,15 @@
         if (handle) {
           const nameNodes = [...container.querySelectorAll('div[dir="ltr"]')];
           const handleIndex = nameNodes.findIndex(node =>
-            node.textContent.trim().toLowerCase() === '@' + handle[1].toLowerCase());
+            node.closest?.('[tabindex="-1"]'));
           const candidates = handleIndex < 0 ? nameNodes : nameNodes.slice(0, handleIndex);
           // The display name comes before affiliation and other metadata.
           // This fallback is only for plain-text names. If React removes an
           // account link's href while recycling a row, descendants inside that
           // link must not become a second, fake display-name match.
-          const name = candidates.find(node => !node.closest?.('a') && isNameCandidate(node));
+          const name = candidates.find(node =>
+            !node.closest?.('a, [tabindex="-1"]') &&
+            isNameCandidate(node));
           if (name && !seen.has(name)) {
             seen.add(name);
             found.push({ link: name, username: handle[1].toLowerCase(), placement: 'header' });

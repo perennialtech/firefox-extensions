@@ -526,6 +526,7 @@ test('Firefox annotates public X name-handle pairs without data-testid container
           country: username === 'alice' ? 'Japan' : 'India', accurate: true };
       } } };
     });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
     const profile = '#profile-name > [data-x-account-flag="true"]';
     const post = '#post-name > [data-x-account-flag="true"]';
@@ -593,6 +594,7 @@ test('Firefox annotates the plain-text main header of a public X profile',
           country: username === '_voltcrash' ? 'India' : 'Japan', accurate: true };
       } } };
     });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
     const badge = '#main-name > [data-x-account-flag="true"]';
     await page.locator(badge).waitFor();
@@ -608,6 +610,14 @@ test('Firefox annotates the plain-text main header of a public X profile',
     assert.equal(await page.locator('#login-heading [data-x-account-flag]').count(), 0);
     assert.equal(await page.locator('#stray-handle [data-x-account-flag]').count(), 0);
     assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['_voltcrash']);
+
+    // A display name may begin with @ without being the account handle.
+    await page.evaluate(() => {
+      document.querySelector('#main-name h1').textContent = '@Awesome Studio';
+    });
+    await page.waitForTimeout(200);
+    assert.deepEqual(await page.locator('#main-name > [data-x-account-flag]')
+      .allTextContents(), ['🇮🇳 IND']);
 
     // An image-only keycap name is still a valid main-profile display name.
     await page.evaluate(() => {
@@ -879,7 +889,7 @@ test('Firefox does not reveal hidden account-name rows to insert badges',
     t.after(() => browser.close());
     const page = await browser.newPage();
     await page.setContent(`
-      <style>.hidden { display: none; }</style>
+      <style>.hidden, .collapsed { display: none; }</style>
       <section data-testid="User-Name">
         <div id="row" class="hidden">
           <a href="/Alice" role="link">Alice</a>
@@ -892,6 +902,7 @@ test('Firefox does not reveal hidden account-name rows to insert badges',
         success: true, country: 'Japan', accurate: true
       }) } };
     });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
     await page.waitForTimeout(350);
     assert.equal(await page.locator('#row').evaluate(node =>
@@ -903,7 +914,7 @@ test('Firefox does not reveal hidden account-name rows to insert badges',
     assert.equal(await page.locator('#row').evaluate(node =>
       getComputedStyle(node).display), 'flex');
 
-    await page.evaluate(() => document.querySelector('#row').classList.add('hidden'));
+    await page.evaluate(() => document.querySelector('#row').classList.add('collapsed'));
     await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
     assert.equal(await page.locator('#row').evaluate(node =>
       getComputedStyle(node).display), 'none');
@@ -937,6 +948,39 @@ test('Firefox detects unlinked public profile headers on profile subroutes',
     }
   });
 
+test('Firefox distinguishes @-prefixed account names from handle elements',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserName">
+        <div id="plain-name"><div dir="ltr">@Awesome Studio</div></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+      <section data-testid="User-Name">
+        <div id="same-name"><div dir="ltr">@Bob</div></div>
+        <div tabindex="-1"><div dir="ltr">@Bob</div></div>
+      </section>
+      <section data-testid="UserCell">
+        <div id="linked-name"><a href="/Carol" role="link">@Design Studio</a></div>
+        <a href="/Carol" tabindex="-1" role="link">@Carol</a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    for (const row of ['#plain-name', '#same-name', '#linked-name']) {
+      await page.locator(`${row} > [data-x-account-flag]`).waitFor();
+      assert.deepEqual(await page.locator(`${row} > [data-x-account-flag]`)
+        .allTextContents(), ['🇯🇵 JPN']);
+    }
+    assert.equal(await page.locator('[tabindex="-1"] [data-x-account-flag]').count(), 0);
+  });
+
 test('Firefox restores original header row layout when chips disappear',
   { timeout: 30_000 }, async t => {
     const browser = await firefox.launch();
@@ -944,7 +988,7 @@ test('Firefox restores original header row layout when chips disappear',
     const page = await browser.newPage();
     await page.setContent(`
       <section data-testid="User-Name">
-        <div id="row" style="display: block; flex-direction: column; align-items: flex-end">
+        <div id="row" style="flex-direction: column; align-items: flex-end">
           <a id="name" href="/Alice" role="link"><div dir="ltr">Alice</div></a>
         </div>
         <a href="/Alice" role="link" tabindex="-1">@Alice</a>
@@ -955,28 +999,29 @@ test('Firefox restores original header row layout when chips disappear',
         success: true, country: 'Japan', accurate: true
       }) } };
     });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
     const badge = '#row > [data-x-account-flag]';
     await page.locator(badge).waitFor();
     assert.deepEqual(await page.locator('#row').evaluate(row => ({
-      display: row.style.display, flex: row.style.flexDirection, align: row.style.alignItems
+      display: getComputedStyle(row).display, flex: row.style.flexDirection, align: row.style.alignItems
     })), { display: 'flex', flex: 'row', align: 'center' });
 
     await page.evaluate(() => document.querySelector('#name').removeAttribute('href'));
     await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
     assert.deepEqual(await page.locator('#row').evaluate(row => ({
-      display: row.style.display, flex: row.style.flexDirection, align: row.style.alignItems
+      display: getComputedStyle(row).display, flex: row.style.flexDirection, align: row.style.alignItems
     })), { display: 'block', flex: 'column', align: 'flex-end' });
 
     await page.evaluate(() => document.querySelector('#name').href = '/Alice');
     await page.locator(badge).waitFor();
     assert.deepEqual(await page.locator('#row').evaluate(row => ({
-      display: row.style.display, flex: row.style.flexDirection, align: row.style.alignItems
+      display: getComputedStyle(row).display, flex: row.style.flexDirection, align: row.style.alignItems
     })), { display: 'flex', flex: 'row', align: 'center' });
     await page.evaluate(() => document.querySelector('#name').removeAttribute('href'));
     await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
     assert.deepEqual(await page.locator('#row').evaluate(row => ({
-      display: row.style.display, flex: row.style.flexDirection, align: row.style.alignItems
+      display: getComputedStyle(row).display, flex: row.style.flexDirection, align: row.style.alignItems
     })), { display: 'block', flex: 'column', align: 'flex-end' });
 
     // X removes entire virtualized timeline rows, sometimes leaving the badge
