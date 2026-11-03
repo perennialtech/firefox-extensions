@@ -776,7 +776,8 @@ test('profile description mentions render inline without annotating unrelated li
     assert.equal(wrapper.children[0], link);
     assert.equal(link.firstElementChild.dataset.xAccountFlag, 'true');
     assert.equal(link.firstElementChild.style.marginInlineStart, '0.25rem');
-    assert.equal(link.style.display, 'inline-flex');
+    assert.equal(link.style.display, undefined);
+    assert.equal(link.firstElementChild.style.flex, '0 1 auto');
     assert.equal(wrapper.style.display, undefined);
   }
   assert.equal(f.profileBio[2].link.children?.length || 0, 0);

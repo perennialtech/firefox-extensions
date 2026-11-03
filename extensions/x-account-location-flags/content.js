@@ -14,7 +14,6 @@
   const urgent = new Set();
   const inFlight = new Set();
   const queue = [];
-  const originalProfileStyles = new WeakMap();
   const regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
   // ISO 3166-1 alpha-2 -> alpha-3 (iso-codes project). Limit country
   // lookups to assigned ISO codes: CLDR also names non-country regions.
@@ -265,16 +264,6 @@
     return rect.bottom > 0 && rect.top < height && rect.right > 0 && rect.left < width;
   }
 
-  const profileStyleProperties = ['display', 'alignItems', 'whiteSpace',
-    'maxWidth', 'overflowWrap'];
-
-  function restoreProfileStyle(link) {
-    const original = originalProfileStyles.get(link);
-    if (!original) return;
-    for (const property of profileStyleProperties) link.style[property] = original[property] || '';
-    originalProfileStyles.delete(link);
-  }
-
   function paint({ link, username, placement }, entry) {
     // Profile descriptions can contain multiple mentions in one inline span.
     // Place each chip inside its link so it wraps with that mention, without
@@ -291,7 +280,6 @@
     // Pending, empty and failed lookups do not create placeholder elements.
     if (!display) {
       badge?.remove();
-      if (profileMention) restoreProfileStyle(link);
       return;
     }
     if (!badge) {
@@ -310,15 +298,11 @@
     badge.style.marginInlineEnd = '0.35rem';
     badge.style.marginInlineStart = placement === 'header' ? '0' : '0.25rem';
     if (profileMention) {
-      if (!originalProfileStyles.has(link)) {
-        originalProfileStyles.set(link, Object.fromEntries(
-          profileStyleProperties.map(property => [property, link.style[property]])));
-      }
-      link.style.display = 'inline-flex';
-      link.style.alignItems = 'center';
-      link.style.whiteSpace = 'normal';
-      link.style.maxWidth = '100%';
-      link.style.overflowWrap = 'anywhere';
+      badge.style.flex = '0 1 auto';
+      badge.style.minWidth = '0';
+      badge.style.maxWidth = '100%';
+      badge.style.overflow = 'hidden';
+      badge.style.textOverflow = 'ellipsis';
       if (badge.parentElement !== link || badge !== link.firstElementChild) {
         link.insertBefore(badge, link.firstChild);
       }
@@ -429,13 +413,8 @@
     const items = findHandles();
     const profileLinks = new Set(items.filter(item => item.placement === 'profile-mention')
       .map(item => item.link));
-    for (const badge of document.querySelectorAll(
-      '[data-testid="UserDescription"] a > [data-x-account-flag="true"]')) {
-      if (!profileLinks.has(badge.parentElement)) {
-        const link = badge.parentElement;
-        badge.remove();
-        restoreProfileStyle(link);
-      }
+    for (const badge of document.querySelectorAll('a > [data-x-account-flag="true"]')) {
+      if (!profileLinks.has(badge.parentElement)) badge.remove();
     }
     const mountedNames = new Set(items.map(item => item.username));
     // React unmounts virtualized rows; discard queued work for removed rows.

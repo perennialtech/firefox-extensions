@@ -60,6 +60,7 @@ jobs:
           mkdir addon
           cp "$EXTENSION_DIRECTORY/manifest.json" "$EXTENSION_DIRECTORY/background.js" addon/
           if test -f "$EXTENSION_DIRECTORY/content.js"; then cp "$EXTENSION_DIRECTORY/content.js" addon/; fi
+          if test -f "$EXTENSION_DIRECTORY/content.css"; then cp "$EXTENSION_DIRECTORY/content.css" addon/; fi
       - name: Lint extension
         run: npx --yes web-ext@10.8.0 lint --self-hosted --source-dir addon
       - name: Sign for self-distribution

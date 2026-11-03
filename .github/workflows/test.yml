@@ -18,6 +18,7 @@ jobs:
             mkdir -p addon
             cp "$extension/manifest.json" "$extension/background.js" addon/
             if test -f "$extension/content.js"; then cp "$extension/content.js" addon/; fi
+            if test -f "$extension/content.css"; then cp "$extension/content.css" addon/; fi
             npx --yes web-ext@10.8.0 lint --self-hosted --source-dir addon
             rm -rf addon
           done

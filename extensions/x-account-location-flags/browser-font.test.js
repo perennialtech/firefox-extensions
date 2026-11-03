@@ -46,6 +46,7 @@ test('Firefox computes sans-serif fonts for all chip placements under serif pare
         success: true, country: locations[username], accurate: true
       }) } };
     });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
 
     const selectors = ['#regular', '#quoted', '#user-cell', '#bio'];
@@ -130,6 +131,7 @@ test('Firefox renders location tags for mentions in a profile description',
         return { success: true, country: locations[username], accurate: true };
       } } };
     });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
     await page.waitForFunction(() =>
       document.querySelector('#opencode > a > [data-x-account-flag="true"]') &&
@@ -197,6 +199,7 @@ test('Firefox preserves multiple profile mentions sharing an inline parent',
         accurate: true
       }) } };
     });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
     await page.waitForTimeout(450);
     const handles = () => page.locator('#mentions a > [data-x-account-flag]')
@@ -242,8 +245,7 @@ test('Firefox restores profile link styles and contains long annotated handles',
       <div data-testid="UserDescription" style="width: 160px; font: 16px Arial">
         <span id="profile-bio">
           <a id="long" role="link" href="/abcdefghijklmno"
-            style="color: rebeccapurple; display: inline-block; white-space: pre-wrap">
-            @abcdefghijklmno</a>
+            style="color: rebeccapurple">@abcdefghijklmno</a>
         </span>
       </div>
     `);
@@ -252,6 +254,7 @@ test('Firefox restores profile link styles and contains long annotated handles',
         success: true, country: 'Japan', accurate: true
       }) } };
     });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
     const badge = '#long > [data-x-account-flag="true"]';
     await page.locator(badge).waitFor();
@@ -259,6 +262,8 @@ test('Firefox restores profile link styles and contains long annotated handles',
       const bio = document.querySelector('[data-testid="UserDescription"]');
       return bio.scrollWidth <= bio.clientWidth + 1;
     }), true, 'a maximum-length username must not overflow the biography');
+    assert.equal(await page.locator('#long').evaluate(link =>
+      getComputedStyle(link).display), 'inline-flex');
     await page.evaluate(() => {
       const link = document.querySelector('#long');
       link.removeAttribute('href');
@@ -275,7 +280,7 @@ test('Firefox restores profile link styles and contains long annotated handles',
         overflowWrap: link.style.overflowWrap,
         color: link.style.color
       })), {
-        display: 'inline-block', whiteSpace: 'pre-wrap', alignItems: '',
+        display: '', whiteSpace: '', alignItems: '',
         maxWidth: '', overflowWrap: '', color: 'rebeccapurple'
       });
     };
@@ -291,10 +296,79 @@ test('Firefox restores profile link styles and contains long annotated handles',
     });
     await page.locator(badge).waitFor();
     await page.evaluate(() => {
-      document.querySelector('#long').lastChild.textContent =
-        'This is no longer an account mention';
+      const link = document.querySelector('#long');
+      link.style.setProperty('display', 'inline-grid', 'important');
+      link.style.setProperty('white-space', 'pre-wrap', 'important');
+      link.style.setProperty('max-width', '75%', 'important');
+      link.lastChild.textContent = 'This is no longer an account mention';
     });
     await page.waitForFunction(() =>
       !document.querySelector('#long > [data-x-account-flag]'));
-    await checkRestored();
+    assert.deepEqual(await page.locator('#long').evaluate(link => ({
+      display: link.style.display,
+      displayPriority: link.style.getPropertyPriority('display'),
+      whiteSpace: link.style.whiteSpace,
+      whiteSpacePriority: link.style.getPropertyPriority('white-space'),
+      maxWidth: link.style.maxWidth,
+      maxWidthPriority: link.style.getPropertyPriority('max-width'),
+      color: link.style.color
+    })), {
+      display: 'inline-grid', displayPriority: 'important',
+      whiteSpace: 'pre-wrap', whiteSpacePriority: 'important',
+      maxWidth: '75%', maxWidthPriority: 'important', color: 'rebeccapurple'
+    });
+  });
+
+test('Firefox contains long location labels and cleans up reused profile links',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    const longLocation = 'Some Unknown Region with a Very Very Long Name';
+    await page.setContent(`
+      <div data-testid="UserDescription" style="width: 160px; font: 16px Arial">
+        <div dir="auto" id="profile-bio">
+          <a id="long-location" role="link" href="/abcdefghijklmno">@abcdefghijklmno</a>
+          <a id="moved" role="link" href="/opencode"
+            style="color: rebeccapurple; display: inline-block !important;
+              white-space: pre-wrap !important">@opencode</a>
+        </div>
+      </div>
+      <div data-testid="UserCell"><div id="cell-bio" dir="auto"></div></div>
+    `);
+    await page.evaluate(location => {
+      window.browser = { runtime: { sendMessage: async ({ username }) => ({
+        success: true, country: username === 'opencode' ? 'Japan' : location,
+        accurate: true
+      }) } };
+    }, longLocation);
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.waitForFunction(() =>
+      document.querySelector('#long-location > [data-x-account-flag]') &&
+      document.querySelector('#moved > [data-x-account-flag]'));
+    assert.equal(await page.evaluate(() => {
+      const bio = document.querySelector('[data-testid="UserDescription"]');
+      return bio.scrollWidth <= bio.clientWidth + 1;
+    }), true, 'unknown long location labels must not overflow narrow biographies');
+    assert.equal(await page.locator('#long-location > [data-x-account-flag]')
+      .getAttribute('title'), `Account based in ${longLocation} (according to X)`);
+    await page.evaluate(() => {
+      document.querySelector('#cell-bio').appendChild(document.querySelector('#moved'));
+    });
+    await page.waitForFunction(() =>
+      document.querySelector('#cell-bio > [data-x-account-flag]') &&
+      !document.querySelector('#moved > [data-x-account-flag]'));
+    assert.equal(await page.locator('#cell-bio [data-x-account-flag]').count(), 1);
+    assert.deepEqual(await page.locator('#moved').evaluate(link => ({
+      display: link.style.getPropertyValue('display'),
+      displayPriority: link.style.getPropertyPriority('display'),
+      whiteSpace: link.style.getPropertyValue('white-space'),
+      whiteSpacePriority: link.style.getPropertyPriority('white-space'),
+      color: link.style.color
+    })), {
+      display: 'inline-block', displayPriority: 'important',
+      whiteSpace: 'pre-wrap', whiteSpacePriority: 'important',
+      color: 'rebeccapurple'
+    });
   });
