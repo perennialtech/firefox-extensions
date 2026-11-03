@@ -219,12 +219,18 @@
   function styleHeaderRow(row) {
     if (!headerRowStyles.has(row)) {
       headerRowStyles.set(row, {
+        display: row.style.display,
         flexDirection: row.style.flexDirection,
         alignItems: row.style.alignItems,
+        displayPriority: row.style.getPropertyPriority?.('display') || '',
         flexPriority: row.style.getPropertyPriority?.('flex-direction') || '',
         alignPriority: row.style.getPropertyPriority?.('align-items') || ''
       });
     }
+    // flex-direction has no effect on an inline span or block div. Public X
+    // renders the name inside block children of such wrappers, which would
+    // otherwise force the chip onto its own line.
+    row.style.display = row.tagName === 'SPAN' ? 'inline-flex' : 'flex';
     row.style.flexDirection = 'row';
     row.style.alignItems = 'center';
   }
@@ -233,6 +239,7 @@
     const original = headerRowStyles.get(row);
     if (!original) return;
     for (const [name, property, priority] of [
+      ['display', 'display', 'displayPriority'],
       ['flexDirection', 'flex-direction', 'flexPriority'],
       ['alignItems', 'align-items', 'alignPriority']
     ]) {
@@ -253,7 +260,11 @@
 
   function restoreUnusedHeaderRows() {
     for (const row of headerRowStyles.keys()) {
-      if (![...(row.children || [])].some(child => child.dataset?.xAccountFlag === 'true')) {
+      // X virtualizes timeline items by detaching entire rows. Their chips
+      // remain children of the detached node, but must not keep the row alive
+      // through this Map after the next mutation-driven scan.
+      if (row.isConnected === false ||
+        ![...(row.children || [])].some(child => child.dataset?.xAccountFlag === 'true')) {
         restoreHeaderRow(row);
       }
     }
@@ -294,7 +305,7 @@
         // Bio links appear after the account's handle in a UserCell.
         if (i >= handles.get(match[1].toLowerCase())) continue;
         // The display-name link is distinct from the handle and avatar links.
-        if (!hasDisplayName(link)) continue;
+        if (!isNameCandidate(link)) continue;
         if (seen.has(link)) continue;
         seen.add(link);
         found.push({ link, username: match[1].toLowerCase(), placement: 'header' });

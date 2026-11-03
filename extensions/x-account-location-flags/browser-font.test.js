@@ -533,6 +533,16 @@ test('Firefox annotates public X name-handle pairs without data-testid container
       document.querySelector(a) && document.querySelector(b), [profile, post]);
     assert.equal(await page.locator(profile).textContent(), '🇮🇳 IND');
     assert.equal(await page.locator(post).textContent(), '🇮🇳 IND');
+    for (const row of ['#profile-name', '#post-name']) {
+      assert.equal(await page.locator(row).evaluate(element => {
+        const badge = element.querySelector(':scope > [data-x-account-flag]');
+        const name = badge?.nextElementSibling;
+        if (!name) return false;
+        const a = badge.getBoundingClientRect();
+        const b = name.getBoundingClientRect();
+        return Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top);
+      }), true, row + ' badge and display name must overlap vertically');
+    }
     for (const selector of ['#avatar-only', '#bio', '#follow', '#profile-handle', '#post-handle']) {
       assert.equal(await page.locator(`${selector} [data-x-account-flag]`).count(), 0);
     }
@@ -587,6 +597,13 @@ test('Firefox annotates the plain-text main header of a public X profile',
     const badge = '#main-name > [data-x-account-flag="true"]';
     await page.locator(badge).waitFor();
     assert.equal(await page.locator(badge).textContent(), '🇮🇳 IND');
+    assert.equal(await page.locator('#main-name').evaluate(row => {
+      const chip = row.querySelector(':scope > [data-x-account-flag]');
+      const name = row.querySelector('h1');
+      const a = chip.getBoundingClientRect();
+      const b = name.getBoundingClientRect();
+      return Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top);
+    }), true, 'main profile header chip must appear on the name line');
     assert.equal(await page.locator('#main-name > [data-x-account-flag]').count(), 1);
     assert.equal(await page.locator('#login-heading [data-x-account-flag]').count(), 0);
     assert.equal(await page.locator('#stray-handle [data-x-account-flag]').count(), 0);
@@ -637,6 +654,13 @@ test('Firefox prefers the account name over avatar and unrelated image links',
         <div id="profile-name"><div dir="ltr"><img alt="⚡️"></div></div>
         <div tabindex="-1"><div dir="ltr">@_voltcrash</div></div>
       </section>
+      <section data-testid="UserName" id="mixed">
+        <div id="mixed-avatar"><a href="/Eve" role="link">
+          <img src="https://pbs.twimg.com/profile_images/123/avatar.jpg" alt="⚡️">
+        </a></div>
+        <div id="mixed-name"><div dir="ltr">Eve</div></div>
+        <a href="/Eve" role="link" tabindex="-1">@Eve</a>
+      </section>
     `);
     await page.evaluate(() => {
       window.lookupHandles = [];
@@ -648,12 +672,14 @@ test('Firefox prefers the account name over avatar and unrelated image links',
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
     await page.waitForFunction(() =>
       document.querySelector('#alice-name > [data-x-account-flag]') &&
-      document.querySelector('#profile-name > [data-x-account-flag]'));
+      document.querySelector('#profile-name > [data-x-account-flag]') &&
+      document.querySelector('#mixed-name > [data-x-account-flag]'));
     assert.equal(await page.locator('#avatar-row [data-x-account-flag]').count(), 0);
     assert.equal(await page.locator('#avatar-only [data-x-account-flag]').count(), 0);
     assert.equal(await page.locator('#misc-row [data-x-account-flag]').count(), 0);
+    assert.equal(await page.locator('#mixed-avatar [data-x-account-flag]').count(), 0);
     assert.deepEqual(await page.evaluate(() => window.lookupHandles.sort()),
-      ['_voltcrash', 'alice']);
+      ['_voltcrash', 'alice', 'eve']);
   });
 
 test('Firefox reconciles reused name rows and observes emoji alt changes',
@@ -826,7 +852,7 @@ test('Firefox restores original header row layout when chips disappear',
     const page = await browser.newPage();
     await page.setContent(`
       <section data-testid="User-Name">
-        <div id="row" style="flex-direction: column; align-items: flex-end">
+        <div id="row" style="display: block; flex-direction: column; align-items: flex-end">
           <a id="name" href="/Alice" role="link"><div dir="ltr">Alice</div></a>
         </div>
         <a href="/Alice" role="link" tabindex="-1">@Alice</a>
@@ -841,23 +867,36 @@ test('Firefox restores original header row layout when chips disappear',
     const badge = '#row > [data-x-account-flag]';
     await page.locator(badge).waitFor();
     assert.deepEqual(await page.locator('#row').evaluate(row => ({
-      flex: row.style.flexDirection, align: row.style.alignItems
-    })), { flex: 'row', align: 'center' });
+      display: row.style.display, flex: row.style.flexDirection, align: row.style.alignItems
+    })), { display: 'flex', flex: 'row', align: 'center' });
 
     await page.evaluate(() => document.querySelector('#name').removeAttribute('href'));
     await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
     assert.deepEqual(await page.locator('#row').evaluate(row => ({
-      flex: row.style.flexDirection, align: row.style.alignItems
-    })), { flex: 'column', align: 'flex-end' });
+      display: row.style.display, flex: row.style.flexDirection, align: row.style.alignItems
+    })), { display: 'block', flex: 'column', align: 'flex-end' });
 
     await page.evaluate(() => document.querySelector('#name').href = '/Alice');
     await page.locator(badge).waitFor();
     assert.deepEqual(await page.locator('#row').evaluate(row => ({
-      flex: row.style.flexDirection, align: row.style.alignItems
-    })), { flex: 'row', align: 'center' });
+      display: row.style.display, flex: row.style.flexDirection, align: row.style.alignItems
+    })), { display: 'flex', flex: 'row', align: 'center' });
     await page.evaluate(() => document.querySelector('#name').removeAttribute('href'));
     await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
     assert.deepEqual(await page.locator('#row').evaluate(row => ({
-      flex: row.style.flexDirection, align: row.style.alignItems
-    })), { flex: 'column', align: 'flex-end' });
+      display: row.style.display, flex: row.style.flexDirection, align: row.style.alignItems
+    })), { display: 'block', flex: 'column', align: 'flex-end' });
+
+    // X removes entire virtualized timeline rows, sometimes leaving the badge
+    // inside the detached node. Drop its retained style-tracking entry too.
+    await page.evaluate(() => document.querySelector('#name').href = '/Alice');
+    await page.locator(badge).waitFor();
+    await page.evaluate(() => {
+      window.detachedRow = document.querySelector('#row');
+      window.detachedRow.parentElement.remove();
+    });
+    await page.waitForFunction(() =>
+      window.detachedRow.style.flexDirection === 'column' &&
+      window.detachedRow.style.alignItems === 'flex-end');
+    assert.equal(await page.locator('#row').count(), 0);
   });
