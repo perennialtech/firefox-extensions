@@ -232,3 +232,69 @@ test('Firefox preserves multiple profile mentions sharing an inline parent',
       document.querySelectorAll('#mentions [data-x-account-flag]').length === 0);
     assert.equal(await page.locator('#mentions [data-x-account-flag]').count(), 0);
   });
+
+test('Firefox restores profile link styles and contains long annotated handles',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div data-testid="UserDescription" style="width: 160px; font: 16px Arial">
+        <span id="profile-bio">
+          <a id="long" role="link" href="/abcdefghijklmno"
+            style="color: rebeccapurple; display: inline-block; white-space: pre-wrap">
+            @abcdefghijklmno</a>
+        </span>
+      </div>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    const badge = '#long > [data-x-account-flag="true"]';
+    await page.locator(badge).waitFor();
+    assert.equal(await page.evaluate(() => {
+      const bio = document.querySelector('[data-testid="UserDescription"]');
+      return bio.scrollWidth <= bio.clientWidth + 1;
+    }), true, 'a maximum-length username must not overflow the biography');
+    await page.evaluate(() => {
+      const link = document.querySelector('#long');
+      link.removeAttribute('href');
+      link.lastChild.textContent = 'A longer ordinary description link with spaces';
+    });
+    await page.waitForFunction(() =>
+      !document.querySelector('#long > [data-x-account-flag]'));
+    const checkRestored = async () => {
+      assert.deepEqual(await page.locator('#long').evaluate(link => ({
+        display: link.style.display,
+        whiteSpace: link.style.whiteSpace,
+        alignItems: link.style.alignItems,
+        maxWidth: link.style.maxWidth,
+        overflowWrap: link.style.overflowWrap,
+        color: link.style.color
+      })), {
+        display: 'inline-block', whiteSpace: 'pre-wrap', alignItems: '',
+        maxWidth: '', overflowWrap: '', color: 'rebeccapurple'
+      });
+    };
+    await checkRestored();
+    assert.equal(await page.evaluate(() => {
+      const bio = document.querySelector('[data-testid="UserDescription"]');
+      return bio.scrollWidth <= bio.clientWidth + 1;
+    }), true);
+    await page.evaluate(() => {
+      const link = document.querySelector('#long');
+      link.href = '/abcdefghijklmno';
+      link.lastChild.textContent = '@abcdefghijklmno';
+    });
+    await page.locator(badge).waitFor();
+    await page.evaluate(() => {
+      document.querySelector('#long').lastChild.textContent =
+        'This is no longer an account mention';
+    });
+    await page.waitForFunction(() =>
+      !document.querySelector('#long > [data-x-account-flag]'));
+    await checkRestored();
+  });
