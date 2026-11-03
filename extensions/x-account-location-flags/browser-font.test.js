@@ -845,6 +845,98 @@ test('Firefox ignores emoji-bearing avatar and affiliation decorations before na
     }
   });
 
+test('Firefox preserves legitimate account names containing affiliation-related words',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserName">
+        <div id="plain-name"><div dir="ltr">Affiliate Network</div></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+      <section data-testid="UserCell">
+        <div id="linked-name"><a href="/Bob" role="link">Affiliated Artists</a></div>
+        <a href="/Bob" role="link" tabindex="-1">@Bob</a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    for (const row of ['#plain-name', '#linked-name']) {
+      await page.locator(`${row} > [data-x-account-flag]`).waitFor();
+      assert.deepEqual(await page.locator(`${row} > [data-x-account-flag]`)
+        .allTextContents(), ['🇯🇵 JPN']);
+    }
+  });
+
+test('Firefox does not reveal hidden account-name rows to insert badges',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <style>.hidden { display: none; }</style>
+      <section data-testid="User-Name">
+        <div id="row" class="hidden">
+          <a href="/Alice" role="link">Alice</a>
+        </div>
+        <a href="/Alice" role="link" tabindex="-1">@Alice</a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.waitForTimeout(350);
+    assert.equal(await page.locator('#row').evaluate(node =>
+      getComputedStyle(node).display), 'none');
+    assert.equal(await page.locator('#row [data-x-account-flag]').count(), 0);
+
+    await page.evaluate(() => document.querySelector('#row').classList.remove('hidden'));
+    await page.locator('#row > [data-x-account-flag]').waitFor();
+    assert.equal(await page.locator('#row').evaluate(node =>
+      getComputedStyle(node).display), 'flex');
+
+    await page.evaluate(() => document.querySelector('#row').classList.add('hidden'));
+    await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
+    assert.equal(await page.locator('#row').evaluate(node =>
+      getComputedStyle(node).display), 'none');
+  });
+
+test('Firefox detects unlinked public profile headers on profile subroutes',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.route('https://x.com/Alice/**', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: `
+        <div>
+          <span id="profile-name"><h1>Alice</h1></span>
+          <span><span>@Alice</span></span>
+        </div>
+      `
+    }));
+    for (const tab of ['media', 'with_replies', 'likes', 'highlights', 'articles']) {
+      await page.goto('https://x.com/Alice/' + tab);
+      await page.evaluate(() => {
+        window.browser = { runtime: { sendMessage: async () => ({
+          success: true, country: 'Japan', accurate: true
+        }) } };
+      });
+      await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+      await page.locator('#profile-name > [data-x-account-flag]').waitFor();
+      assert.deepEqual(await page.locator('#profile-name > [data-x-account-flag]')
+        .allTextContents(), ['🇯🇵 JPN'], 'profile tab: ' + tab);
+    }
+  });
+
 test('Firefox restores original header row layout when chips disappear',
   { timeout: 30_000 }, async t => {
     const browser = await firefox.launch();

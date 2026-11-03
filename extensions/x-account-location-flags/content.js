@@ -207,12 +207,11 @@
     // These decorations can themselves contain an emoji; that alone does not
     // make them the account display name. Inspect ancestors as well as the
     // image, since X often wraps avatar and affiliation artwork in div[dir=ltr].
-    if (node.closest?.('[data-testid*="Avatar" i], [data-testid*="Affiliat" i], ' +
-      '[class*="avatar" i], [class*="affiliat" i], [id*="avatar" i], [id*="affiliat" i]')) {
+    if (node.closest?.('[data-testid*="Avatar" i], [data-testid*="Affiliation" i], ' +
+      '[class*="avatar" i], [class*="affiliation" i], [id*="avatar" i], [id*="affiliation" i]')) {
       return false;
     }
     if (node.querySelector?.('img[src*="/profile_images/"]')) return false;
-    if (/\baffiliat(?:ed|ion|e)\b/i.test(node.textContent)) return false;
     return hasDisplayName(node);
   }
 
@@ -377,7 +376,8 @@
     // name is an h1 and the matching @handle is plain text, with no profile
     // links. Scope this to the visited profile route so unrelated headings
     // and account references elsewhere on the page cannot acquire chips.
-    const profile = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(location.pathname);
+    const profile = /^\/([a-zA-Z0-9_]{1,15})(?:\/(?:with_replies|media|likes|highlights|articles))?\/?$/
+      .exec(location.pathname);
     if (profile) {
       const username = profile[1].toLowerCase();
       for (const name of root.querySelectorAll('h1')) {
@@ -447,6 +447,15 @@
       }
     } else {
       if (placement === 'header') {
+        // Do not overwrite X's hidden state with our inline flex display.
+        // Hidden rows can still be mounted and fetched before they are shown.
+        if (row.hidden || row.closest?.('[hidden]') ||
+          row.classList?.contains('hidden') ||
+          window.getComputedStyle?.(row).display === 'none') {
+          badge?.remove();
+          restoreUnusedHeaderRows();
+          return;
+        }
         // X's inner display-name wrapper defaults to a flex column.
         styleHeaderRow(row);
       }
@@ -608,7 +617,8 @@
   window.addEventListener('scroll', scheduleScan, true);
   window.addEventListener('resize', scheduleScan);
   new MutationObserver(scheduleScan).observe(document.documentElement, {
-    childList: true, subtree: true, attributes: true, attributeFilter: ['href', 'alt'],
+    childList: true, subtree: true, attributes: true,
+    attributeFilter: ['href', 'alt', 'class', 'hidden'],
     characterData: true
   });
   scan();
