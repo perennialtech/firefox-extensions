@@ -34,8 +34,8 @@ function backgroundFixture(fetchImpl = async () => response(), storage = {}) {
       return fetchImpl(url, options);
     }
   });
-  async function send(username, priority = false) {
-    return handlers[0]({ type: 'lookup', username, priority });
+  async function send(username, priority = false, refresh = false) {
+    return handlers[0]({ type: 'lookup', username, priority, refresh });
   }
   return { browser, storage, calls, send };
 }
@@ -87,7 +87,12 @@ test('older cache entries refresh once and preserve source and accuracy across r
     success: true, country: 'Japan', accurate: null,
     createdCountryAccurate: false, source: 'United States App Store'
   };
-  assert.deepEqual({ ...await f.send('alice') }, expected);
+  assert.deepEqual({ ...await f.send('alice') }, {
+    success: true, country: 'Japan', accurate: true, createdCountryAccurate: null, source: null,
+    refresh: true
+  });
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual({ ...await f.send('alice', false, true) }, expected);
   assert.equal(f.calls.length, 1);
   await waitFor(() => storage[key]?.alice?.source === expected.source);
   const restart = backgroundFixture(undefined, storage);
@@ -105,7 +110,7 @@ test('legacy cached locations survive a failed refresh and service cooldown', as
   const expected = {
     success: true, country: 'Japan', accurate: true, createdCountryAccurate: null, source: null
   };
-  assert.deepEqual({ ...await f.send('alice') }, expected);
+  assert.deepEqual({ ...await f.send('alice', false, true) }, expected);
   assert.deepEqual({ ...await f.send('alice') }, expected);
   assert.equal((await f.send('uncached')).success, false);
   assert.equal(f.calls.length, 1);
@@ -120,7 +125,7 @@ test('an empty metadata refresh does not replace an unexpired legacy location', 
     }
   };
   const f = backgroundFixture(async () => response(200, { code: 200 }), storage);
-  assert.deepEqual({ ...await f.send('alice') }, {
+  assert.deepEqual({ ...await f.send('alice', false, true) }, {
     success: true, country: 'Japan', accurate: true, createdCountryAccurate: null, source: null
   });
   assert.equal(f.calls.length, 1);
@@ -384,6 +389,25 @@ test('all DOM-mounted accounts are prefetched before they enter the viewport', a
     f.badge(1)?.textContent === '🇯🇵 JPN' &&
     f.badge(2)?.textContent === '🇯🇵 JPN');
   assert.deepEqual(f.calls.map(c => c.username).sort(), ['alice', 'bob', 'carol']);
+});
+
+test('legacy chips stay visible while their metadata refresh is pending', async () => {
+  let finish;
+  const refresh = new Promise(resolve => { finish = resolve; });
+  const f = contentFixture({
+    accounts: [{ handle: 'Alice', name: 'Alice' }],
+    lookup: ({ refresh: shouldRefresh }) => shouldRefresh ? refresh : {
+      success: true, country: 'Japan', accurate: true, refresh: true
+    }
+  });
+  await waitFor(() => f.badge(0)?.textContent === '🇯🇵 JPN');
+  assert.equal(f.badge(0).style.backgroundColor, '#fcd34d');
+  finish({
+    success: true, country: 'Japan', accurate: true,
+    createdCountryAccurate: true, source: 'United States App Store'
+  });
+  await waitFor(() => f.badge(0)?.textContent === '🇯🇵 JPN via USA');
+  assert.equal(f.badge(0).style.backgroundColor, '#f5f5f5');
 });
 
 test('chip takes its intrinsic width immediately BEFORE display-name link', async () => {

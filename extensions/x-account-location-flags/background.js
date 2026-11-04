@@ -152,17 +152,18 @@
     return { success: true, country, accurate, createdCountryAccurate, source };
   }
 
-  async function lookup(handle, priority) {
+  async function lookup(handle, priority, refresh = false) {
     await loadCache();
     const cached = cache.get(handle);
     const unexpired = cached?.expires > Date.now();
     // Legacy cache entries remain usable while the missing fields are refreshed.
-    if (unexpired && cached.createdCountryAccurate !== undefined && cached.source !== undefined) {
-      return cachedResult(cached);
+    const paused = Date.now() < blockedUntil;
+    if (unexpired) {
+      const complete = cached.createdCountryAccurate !== undefined && cached.source !== undefined;
+      if (complete || paused) return cachedResult(cached);
+      if (!refresh) return { ...cachedResult(cached), refresh: true };
     }
-    if (Date.now() < blockedUntil) {
-      return unexpired ? cachedResult(cached) : { success: false, retryAt: blockedUntil };
-    }
+    if (paused) return { success: false, retryAt: blockedUntil };
     if (pending.has(handle)) {
       if (priority) {
         const index = queue.findIndex(item => item.handle === handle);
@@ -186,6 +187,6 @@
   browser.runtime.onMessage.addListener(message => {
     if (message?.type !== 'lookup' || typeof message.username !== 'string' ||
         !HANDLE.test(message.username)) return undefined;
-    return lookup(message.username.toLowerCase(), message.priority === true);
+    return lookup(message.username.toLowerCase(), message.priority === true, message.refresh === true);
   });
 })();

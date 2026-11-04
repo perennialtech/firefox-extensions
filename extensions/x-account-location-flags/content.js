@@ -522,6 +522,20 @@
     }, Math.max(1, retryAt - Date.now()));
   }
 
+  function storeLocation(username, result) {
+    entries.set(username, { ...result, expires: Date.now() + 30 * 60 * 1000 });
+  }
+
+  function refreshLocation(username, priority) {
+    void browser.runtime.sendMessage({ type: 'lookup', username, priority, refresh: true })
+      .then(result => {
+        if (result?.success) {
+          storeLocation(username, result);
+          paintUsername(username);
+        }
+      }).catch(() => {});
+  }
+
   function pump() {
     if (Date.now() < retryAt) return;
     while (inFlight.size < MAX_IN_FLIGHT && queue.length) {
@@ -533,7 +547,8 @@
       void browser.runtime.sendMessage({ type: 'lookup', username, priority })
         .then(result => {
           if (result?.success) {
-            entries.set(username, { ...result, expires: Date.now() + 30 * 60 * 1000 });
+            storeLocation(username, result);
+            if (result.refresh) refreshLocation(username, priority);
           } else if (result?.retryAt > Date.now()) {
             delayRetry(result.retryAt);
           } else {
