@@ -423,30 +423,34 @@
   }
 
   function renderedAccount(link, username) {
-    const node = link.wrappedJSObject;
-    if (!node) return null;
-    const key = Object.keys(node).find(key => key.startsWith('__reactFiber$'));
-    let fiber = node[key];
-    let root = fiber;
-    while (root?.return) root = root.return;
-    // React can retain the original DOM pointer after reusing a row.
-    if (root?.stateNode?.current && root.stateNode.current !== root) fiber = fiber.alternate;
-    let userId;
-    for (; fiber; fiber = fiber.return) {
-      const props = fiber.memoizedProps;
-      // X's tweet names carry userData, while list rows carry the same
-      // fields directly on their UserCell component.
-      const account = props?.userData || (props?.testID === 'UserCell' ? props : null);
-      if (!userId && account?.screenName?.toLowerCase() === username &&
-          typeof account.userId === 'string' && /^[0-9]+$/.test(account.userId)) {
-        userId = account.userId;
+    try {
+      const node = link.wrappedJSObject;
+      if (!node) return null;
+      const key = Object.keys(node).find(key => key.startsWith('__reactFiber$'));
+      let fiber = node[key];
+      let root = fiber;
+      while (root?.return) root = root.return;
+      // React can retain the original DOM pointer after reusing a row.
+      if (root?.stateNode?.current && root.stateNode.current !== root) fiber = fiber.alternate;
+      let userId;
+      for (; fiber; fiber = fiber.return) {
+        const props = fiber.memoizedProps;
+        // X's tweet names carry userData, while list rows carry the same
+        // fields directly on their UserCell component.
+        const account = props?.userData || (props?.testID === 'UserCell' ? props : null);
+        if (!userId && account?.screenName?.toLowerCase() === username &&
+            typeof account.userId === 'string' && /^[0-9]+$/.test(account.userId)) {
+          userId = account.userId;
+        }
+        const store = props?.value?.store;
+        if (typeof store?.dispatch === 'function' && typeof store.getState === 'function') {
+          return userId ? { store, userId } : null;
+        }
       }
-      const store = props?.value?.store;
-      if (typeof store?.dispatch === 'function' && typeof store.getState === 'function') {
-        return userId ? { store, userId } : null;
-      }
+      return null;
+    } catch (_) {
+      return null;
     }
-    return null;
   }
 
   function sessionViewerId() {
@@ -485,14 +489,10 @@
     setTimeout(scheduleScan, LOOKUP_FAILURE_TTL);
   }
 
-  async function checkAutoBlock({ link, username, placement }) {
-    if (placement !== 'header' || !autoBlockSettings?.autoBlockSouthAsia ||
-        !visibleForBlock(link)) return;
+  async function checkAutoBlock(username, { store, userId }) {
     try {
-      const account = renderedAccount(link, username);
       const viewerId = sessionViewerId();
-      if (!account || !viewerId || viewerId === account.userId) return;
-      const { store, userId } = account;
+      if (!viewerId || viewerId === userId) return;
       const key = viewerId + ':' + userId;
       if (blockChecks.get(key) > Date.now()) return;
       const users = getXUsersModule();
@@ -519,17 +519,15 @@
           blockChecks.delete(key);
           return;
         }
-        storeLocation(username, result);
+        storeLocation('id:' + userId, result);
         paintUsername(username);
         if (qualifiesForBlock(result)) {
-          try {
-            await store.dispatch(users.block(userId));
-            if (users.select(store.getState(), userId)?.blocking !== true) retryBlockCheck(key);
-          } catch (error) {
-            retryBlockCheck(key);
-            throw error;
-          }
+          await store.dispatch(users.block(userId));
+          if (users.select(store.getState(), userId)?.blocking !== true) retryBlockCheck(key);
         }
+      }).catch(error => {
+        retryBlockCheck(key);
+        throw error;
       });
     } catch (_) {
       console.warn('[X Account Location Flags] Could not automatically block @' + username);
@@ -547,7 +545,14 @@
       child.dataset?.xAccountFlag === 'true');
     let badge = existing.find(child => child.dataset.xAccountHandle === username);
     for (const old of existing) if (old !== badge) old.remove();
-    void checkAutoBlock({ link, username, placement });
+    if (placement === 'header' && autoBlockSettings?.autoBlockSouthAsia) {
+      const account = renderedAccount(link, username);
+      if (account) {
+        if (visibleForBlock(link)) void checkAutoBlock(username, account);
+        const byId = entries.get('id:' + account.userId);
+        if (byId?.expires > Date.now()) entry = byId;
+      }
+    }
     const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
     const display = locationLabel(location);
     // Pending, empty and failed lookups do not create placeholder elements.
@@ -667,15 +672,14 @@
     }, Math.max(1, retryAt - Date.now()));
   }
 
-  function storeLocation(username, result) {
-    entries.set(username, { ...result, expires: Date.now() + LOCATION_TTL });
+  function storeLocation(key, result) {
+    entries.set(key, { ...result, expires: Date.now() + LOCATION_TTL });
   }
 
   function refreshLocation(username, priority) {
-    const previous = entries.get(username);
     void browser.runtime.sendMessage({ type: 'lookup', username, priority, refresh: true })
       .then(result => {
-        if (result?.success && entries.get(username) === previous) {
+        if (result?.success) {
           storeLocation(username, result);
           paintUsername(username);
         }
@@ -687,14 +691,11 @@
     while (inFlight.size < MAX_IN_FLIGHT && queue.length) {
       const username = queue.shift();
       queued.delete(username);
-      const previous = entries.get(username);
-      if (previous?.expires > Date.now()) continue;
+      if (entries.get(username)?.expires > Date.now()) continue;
       inFlight.add(username);
       const priority = urgent.delete(username);
       void browser.runtime.sendMessage({ type: 'lookup', username, priority })
         .then(result => {
-          // A concurrent ID lookup can supply the current rendered account.
-          if (entries.get(username) !== previous) return;
           if (result?.success) {
             storeLocation(username, result);
             if (result.refresh) refreshLocation(username, priority);
@@ -705,9 +706,7 @@
             entries.set(username, { country: null, expires: Date.now() + LOOKUP_FAILURE_TTL });
           }
         }).catch(() => {
-          if (entries.get(username) === previous) {
-            entries.set(username, { country: null, expires: Date.now() + LOOKUP_FAILURE_TTL });
-          }
+          entries.set(username, { country: null, expires: Date.now() + LOOKUP_FAILURE_TTL });
         }).finally(() => {
           inFlight.delete(username);
           paintUsername(username);
@@ -720,6 +719,9 @@
     const now = Date.now();
     for (const [key, expiry] of blockChecks) {
       if (expiry <= now) blockChecks.delete(key);
+    }
+    for (const [key, entry] of entries) {
+      if (entry.expires <= now) entries.delete(key);
     }
     const items = findHandles();
     // React can reuse an existing row while its name/handle are being changed.

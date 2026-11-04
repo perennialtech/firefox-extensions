@@ -418,7 +418,8 @@ function contentFixture(options = {}) {
       webpackChunk_twitter_responsive_web: { push: chunk => chunk[2](require) }
     };
     for (const [i, link] of links.entries()) {
-      const profile = (options.autoBlock.renderedProfiles || profiles)[accounts[i].handle.toLowerCase()];
+      const rendered = options.autoBlock.renderedProfiles || profiles;
+      const profile = rendered[Array.isArray(rendered) ? i : accounts[i].handle.toLowerCase()];
       link.wrappedJSObject = { '__reactFiber$test': {
         memoizedProps: profile && { userData: { userId: profile.id_str, screenName: profile.screen_name } },
         return: { memoizedProps: { value: { store } } }
@@ -505,6 +506,30 @@ test('auto-block checks an ID when the handle lookup fails or is still pending',
   assert.deepEqual(f.blocks.sort(), ['2', '3']);
   assert.equal(f.badge(0).textContent, '🇮🇳 IND');
   assert.equal(f.badge(1).textContent, '🇮🇳 IND');
+});
+
+test('different rendered account IDs with the same handle keep their own location chips', async () => {
+  let finishFormer;
+  const pending = new Promise(resolve => { finishFormer = resolve; });
+  const former = { id_str: '2', screen_name: 'Alice' };
+  const current = { id_str: '3', screen_name: 'Alice' };
+  const f = contentFixture({
+    accounts: [
+      { handle: 'Alice', name: 'Former' },
+      { handle: 'Alice', name: 'Current' }
+    ],
+    locations: { alice: 'Japan' },
+    autoBlock: {
+      profiles: { viewer: { id_str: '1', screen_name: 'Viewer' }, former, current },
+      renderedProfiles: [former, current],
+      idLookup: id => id === '2' ? pending : { success: true, country: 'India' }
+    }
+  });
+  await waitFor(() => f.badge(1)?.textContent === '🇮🇳 IND' && f.blocks.length === 1);
+  finishFormer({ success: true, country: 'Canada' });
+  await waitFor(() => f.badge(0)?.textContent === '🇨🇦 CAN');
+  assert.equal(f.badge(1).textContent, '🇮🇳 IND');
+  assert.deepEqual(f.blocks, ['3']);
 });
 
 test('auto-block uses the rendered account when X retains a former handle owner', async () => {
@@ -667,9 +692,10 @@ test('a failed ID lookup retries before the handle entry expires', async () => {
   assert.deepEqual(f.blocks, ['2']);
 });
 
-test('a rejected native block retries using a fresh ID lookup', async () => {
+test('a rejected lock or native block retries using a fresh ID lookup', async () => {
   let now = Date.now();
   let retry;
+  let locks = 0;
   let writes = 0;
   let lookups = 0;
   const f = contentFixture({
@@ -687,6 +713,10 @@ test('a rejected native block retries using a fresh ID lookup', async () => {
         }
         return setTimeout(callback, delay);
       },
+      lock: async (_, callback) => {
+        if (++locks === 1) throw new Error('Lock unavailable');
+        return callback();
+      },
       idLookup: () => {
         lookups++;
         return { success: true, country: 'India' };
@@ -698,9 +728,16 @@ test('a rejected native block retries using a fresh ID lookup', async () => {
   });
   await waitFor(() => retry);
   assert.deepEqual(f.blocks, []);
+  assert.equal(lookups, 0);
+  const firstRetry = retry;
+  now += retry.delay;
+  retry.callback();
+  await waitFor(() => retry !== firstRetry);
+  assert.deepEqual(f.blocks, []);
   now += retry.delay;
   retry.callback();
   await waitFor(() => f.blocks.length === 1);
+  assert.equal(locks, 3);
   assert.equal(lookups, 2);
   assert.equal(writes, 2);
 });
