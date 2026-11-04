@@ -33,7 +33,9 @@
           if (/^[a-z0-9_]{1,15}$/.test(handle) && value &&
               value.expires > now &&
               (value.country === null || typeof value.country === 'string') &&
-              (value.accurate === null || typeof value.accurate === 'boolean')) {
+              (value.accurate === null || typeof value.accurate === 'boolean') &&
+              (value.createdCountryAccurate == null || typeof value.createdCountryAccurate === 'boolean') &&
+              (value.source == null || typeof value.source === 'string')) {
             cache.set(handle, value);
           }
         }
@@ -91,18 +93,21 @@
       }
       // FxTwitter can report an API error in an HTTP 200 JSON envelope.
       if (!response.ok || !body || body.code !== 200) return { success: false };
-      const value = body.about_account?.based_in;
-      const country = typeof value === 'string' && value.trim() && value.length <= 100
-        ? value.trim() : null;
-      const accuracy = body.about_account?.location_accurate;
-      const accurate = typeof accuracy === 'boolean' ? accuracy : null;
+      const { based_in, location_accurate, created_country_accurate, source } = body.about_account || {};
+      const country = typeof based_in === 'string' && based_in.length <= 100
+        ? based_in.trim() || null : null;
+      const metadata = {
+        country,
+        accurate: typeof location_accurate === 'boolean' ? location_accurate : null,
+        createdCountryAccurate: typeof created_country_accurate === 'boolean' ? created_country_accurate : null,
+        source: typeof source === 'string' ? source.trim() || null : null
+      };
       cache.delete(handle);
       cache.set(handle, {
-        country, accurate,
-        expires: Date.now() + (country ? POSITIVE_TTL : EMPTY_TTL)
+        ...metadata, expires: Date.now() + (country ? POSITIVE_TTL : EMPTY_TTL)
       });
       saveSoon();
-      return { success: true, country, accurate };
+      return { success: true, ...metadata };
     } catch (_) {
       return { success: false };
     } finally {
@@ -139,13 +144,21 @@
     if (queue.length) schedulePump(REQUEST_INTERVAL);
   }
 
+  function cachedResult({ country, accurate, createdCountryAccurate = null, source = null }) {
+    return { success: true, country, accurate, createdCountryAccurate, source };
+  }
+
   async function lookup(handle, priority) {
     await loadCache();
     const cached = cache.get(handle);
-    if (cached?.expires > Date.now()) {
-      return { success: true, country: cached.country, accurate: cached.accurate };
+    const unexpired = cached?.expires > Date.now();
+    // Legacy cache entries remain usable while the missing fields are refreshed.
+    if (unexpired && cached.createdCountryAccurate !== undefined && cached.source !== undefined) {
+      return cachedResult(cached);
     }
-    if (Date.now() < blockedUntil) return { success: false, retryAt: blockedUntil };
+    if (Date.now() < blockedUntil) {
+      return unexpired ? cachedResult(cached) : { success: false, retryAt: blockedUntil };
+    }
     if (pending.has(handle)) {
       if (priority) {
         const index = queue.findIndex(item => item.handle === handle);
@@ -159,7 +172,9 @@
       else queue.push(task);
       pump();
     });
-    const tracked = promise.finally(() => pending.delete(handle));
+    const tracked = promise.then(result =>
+      !result.success && cached?.expires > Date.now() ? cachedResult(cached) : result
+    ).finally(() => pending.delete(handle));
     pending.set(handle, tracked);
     return tracked;
   }
