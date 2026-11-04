@@ -37,7 +37,8 @@ function backgroundFixture(fetchImpl = async () => response(), storage = {}) {
   async function send(username, priority = false, refresh = false) {
     return handlers[0]({ type: 'lookup', username, priority, refresh });
   }
-  return { browser, storage, calls, send };
+  const sendId = userId => handlers[0]({ type: 'lookup-id', userId });
+  return { browser, storage, calls, send, sendId };
 }
 
 async function waitFor(predicate, ms = 2000) {
@@ -159,6 +160,28 @@ test('invalid handles are rejected before any request', async () => {
     assert.equal(await f.send(handle), undefined);
   }
   assert.equal(f.calls.length, 0);
+});
+
+test('immutable X IDs preserve precision and only coalesce concurrent lookups', async () => {
+  const id = '9007199254740993';
+  const storage = {
+    'fxtwitter-locations-v1': { ['id:' + id]: {
+      country: 'Japan', accurate: true, createdCountryAccurate: true, source: null,
+      expires: Date.now() + 60000
+    } }
+  };
+  const f = backgroundFixture(async () => response(200, { code: 200, about_account: {
+    based_in: 'India'
+  } }), storage);
+  for (const invalid of [undefined, '', '-1', 'a123', '12/about', 123]) {
+    assert.equal(await f.sendId(invalid), undefined);
+  }
+  const results = await Promise.all([f.sendId(id), f.sendId(id)]);
+  assert.deepEqual(results.map(result => result.country), ['India', 'India']);
+  assert.equal(f.calls.length, 1);
+  assert.equal((await f.sendId(id)).country, 'India');
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls[0].url, 'https://api.fxtwitter.com/2/profile/id:' + id + '/about');
 });
 
 test('missing about metadata caches a valid empty answer', async () => {
@@ -349,6 +372,8 @@ function contentFixture(options = {}) {
   }
   const document = {
     documentElement: { clientHeight: 800, clientWidth: 900 },
+    visibilityState: 'visible',
+    cookie: options.autoBlock?.cookie || 'twid=u%3D1',
     querySelectorAll: selector => selector.startsWith('[data-testid=') &&
       !selector.includes(' > ') ? containers : [],
     addEventListener(name, fn) { listeners.set(name, fn); },
@@ -362,6 +387,7 @@ function contentFixture(options = {}) {
     runtime: {
       async sendMessage(message) {
         calls.push(message);
+        if (message.type === 'lookup-id') return options.autoBlock.idLookup(message.userId);
         if (options.lookup) return options.lookup(message);
         return {
           success: true,
@@ -372,16 +398,420 @@ function contentFixture(options = {}) {
       }
     }
   };
+  const blocks = [];
+  let settingsChanged;
+  if (options.autoBlock) {
+    const profiles = options.autoBlock.profiles;
+    const users = {
+      selectViewerUser: () => profiles.viewer,
+      select: (_, id) => Object.values(profiles).find(user => user.id_str === id),
+      block: id => id
+    };
+    const store = { getState: () => profiles, async dispatch(id) {
+      if (options.autoBlock.dispatch) await options.autoBlock.dispatch(id);
+      users.select(profiles, id).blocking = true;
+      blocks.push(id);
+    } };
+    function require() { return { users }; }
+    require.m = { 1: () => ({ context: 'ACTION_BLOCK', selectViewerUser: null }) };
+    window.wrappedJSObject = {
+      webpackChunk_twitter_responsive_web: { push: chunk => chunk[2](require) }
+    };
+    for (const [i, link] of links.entries()) {
+      const rendered = options.autoBlock.renderedProfiles || profiles;
+      const profile = rendered[Array.isArray(rendered) ? i : accounts[i].handle.toLowerCase()];
+      link.wrappedJSObject = { '__reactFiber$test': {
+        memoizedProps: profile && { userData: { userId: profile.id_str, screenName: profile.screen_name } },
+        return: { memoizedProps: { value: { store } } }
+      } };
+      link.checkVisibility = ({ opacityProperty }) => !opacityProperty || !accounts[i].transparent;
+    }
+    browser.storage = {
+      local: { async get(defaults) { return { ...defaults, ...options.autoBlock.settings }; } },
+      onChanged: { addListener(fn) { settingsChanged = fn; } }
+    };
+  }
   load('content.js', {
-    document, window, browser, Date, Intl, URL,
-    setTimeout, clearTimeout,
+    document, window, browser, Date: options.autoBlock?.clock || Date, Intl, URL,
+    navigator: { locks: { request: options.autoBlock?.lock || ((_, callback) => callback()) } },
+    cloneInto: value => value,
+    setTimeout: options.autoBlock?.setTimeout || setTimeout, clearTimeout,
     location: { origin: 'https://x.com', href: 'https://x.com/home' },
     MutationObserver: class { observe() {} }
   });
   const badge = index => rows[index].children.find(node => node.dataset?.xAccountFlag);
   return { calls, listeners, links, handleLinks, rows, containers,
-    badges, badge, bioRows, profileBio };
+    badges, badge, bioRows, profileBio, blocks, settingsChanged, document };
 }
+
+test('auto-block defaults include uncertain locations and verify the exact X identity', async () => {
+  const handles = ['Viewer', 'Uncertain', 'Reused', 'AlreadyBlocked', 'Offscreen', 'Outside', 'Transparent'];
+  const f = contentFixture({
+    accounts: handles.map((handle, i) => ({
+      handle, name: handle, type: 'User-Name', offscreen: i === 4, transparent: i === 6
+    })),
+    locations: Object.fromEntries(handles.map(handle => [
+      handle.toLowerCase(), handle === 'Outside' ? 'Japan' : 'India'
+    ])),
+    autoBlock: {
+      profiles: Object.fromEntries(handles.map((handle, i) => [handle.toLowerCase(), {
+        screen_name: handle, id_str: String(i + 1), blocking: i === 3
+      }])),
+      idLookup: id => ({ success: true, country: id === '2' ? 'Pakistan' : 'Japan' })
+    }
+  });
+  await waitFor(() => f.blocks.length === 1 &&
+    f.calls.some(call => call.type === 'lookup-id' && call.userId === '3'));
+  f.listeners.get('scroll')();
+  await waitFor(() => handles.every((_, i) => f.badge(i)));
+  assert.deepEqual(f.blocks, ['2']);
+  assert.deepEqual(f.calls.filter(call => call.type === 'lookup-id').map(call => call.userId).sort(), ['2', '3', '6']);
+});
+
+test('a fresh ID check detects a South Asian account despite an older neutral chip', async () => {
+  const f = contentFixture({
+    locations: { alice: 'Japan', bob: null },
+    autoBlock: {
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' },
+        bob: { id_str: '3', screen_name: 'Bob' }
+      },
+      idLookup: () => ({ success: true, country: 'India' })
+    }
+  });
+  await waitFor(() => f.blocks.length === 2);
+  assert.deepEqual(f.blocks.sort(), ['2', '3']);
+  assert.equal(f.badge(0).textContent, '🇮🇳 IND');
+  assert.equal(f.badge(1).textContent, '🇮🇳 IND');
+});
+
+test('auto-block checks an ID when the handle lookup fails or is still pending', async () => {
+  let finish;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const f = contentFixture({
+    lookup: ({ username }) => username === 'alice' ? pending : { success: false },
+    autoBlock: {
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' },
+        bob: { id_str: '3', screen_name: 'Bob' }
+      },
+      idLookup: () => ({ success: true, country: 'India' })
+    }
+  });
+  await waitFor(() => f.blocks.length === 2);
+  finish({ success: true, country: 'Japan' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.blocks.sort(), ['2', '3']);
+  assert.equal(f.badge(0).textContent, '🇮🇳 IND');
+  assert.equal(f.badge(1).textContent, '🇮🇳 IND');
+});
+
+test('different rendered account IDs with the same handle keep their own location chips', async () => {
+  let finishFormer;
+  const pending = new Promise(resolve => { finishFormer = resolve; });
+  const former = { id_str: '2', screen_name: 'Alice' };
+  const current = { id_str: '3', screen_name: 'Alice' };
+  const f = contentFixture({
+    accounts: [
+      { handle: 'Alice', name: 'Former' },
+      { handle: 'Alice', name: 'Current' }
+    ],
+    locations: { alice: 'Japan' },
+    autoBlock: {
+      profiles: { viewer: { id_str: '1', screen_name: 'Viewer' }, former, current },
+      renderedProfiles: [former, current],
+      idLookup: id => id === '2' ? pending : { success: true, country: 'India' }
+    }
+  });
+  await waitFor(() => f.badge(1)?.textContent === '🇮🇳 IND' && f.blocks.length === 1);
+  finishFormer({ success: true, country: 'Canada' });
+  await waitFor(() => f.badge(0)?.textContent === '🇨🇦 CAN');
+  assert.equal(f.badge(1).textContent, '🇮🇳 IND');
+  assert.deepEqual(f.blocks, ['3']);
+});
+
+test('auto-block uses the rendered account when X retains a former handle owner', async () => {
+  const current = { id_str: '3', screen_name: 'Alice' };
+  const f = contentFixture({
+    locations: { alice: 'India' },
+    autoBlock: {
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' },
+        current
+      },
+      renderedProfiles: { alice: current },
+      idLookup: () => ({ success: true, country: 'India' })
+    }
+  });
+  await waitFor(() => f.blocks.length === 1);
+  assert.deepEqual(f.blocks, ['3']);
+  assert.deepEqual(f.calls.filter(call => call.type === 'lookup-id').map(call => call.userId), ['3']);
+});
+
+test('auto-block rechecks the current React fiber if X recycles the name during lookup', async () => {
+  let resolveLookup;
+  const pending = new Promise(resolve => { resolveLookup = resolve; });
+  const f = contentFixture({
+    locations: { alice: 'India' },
+    autoBlock: {
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' },
+        current: { id_str: '3', screen_name: 'Alice' }
+      },
+      idLookup: id => id === '2' ? pending : { success: true, country: 'India' }
+    }
+  });
+  await waitFor(() => f.calls.some(call => call.type === 'lookup-id'));
+  const fiber = f.links[0].wrappedJSObject['__reactFiber$test'];
+  const currentRoot = { memoizedProps: fiber.return.memoizedProps };
+  fiber.return.stateNode = { current: currentRoot };
+  fiber.alternate = {
+    memoizedProps: { userData: { userId: '3', screenName: 'Alice' } },
+    return: currentRoot
+  };
+  resolveLookup({ success: true, country: 'India' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.blocks, []);
+  f.listeners.get('scroll')();
+  await waitFor(() => f.blocks.length === 1);
+  assert.deepEqual(f.blocks, ['3']);
+});
+
+test('a renamed handle keeps its pending check for the same rendered X ID', async () => {
+  let resolveLookup;
+  const pending = new Promise(resolve => { resolveLookup = resolve; });
+  const f = contentFixture({
+    locations: { alice: 'India' },
+    autoBlock: {
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      idLookup: () => pending
+    }
+  });
+  await waitFor(() => f.calls.some(call => call.type === 'lookup-id'));
+  f.links[0].setAttribute('href', '/Alicia');
+  f.handleLinks[0].setAttribute('href', '/Alicia');
+  f.handleLinks[0].textContent = '@Alicia';
+  f.links[0].wrappedJSObject['__reactFiber$test'].memoizedProps.userData.screenName = 'Alicia';
+  resolveLookup({ success: true, country: 'India' });
+  await waitFor(() => f.blocks.length === 1);
+  assert.equal(f.calls.filter(call => call.type === 'lookup-id').length, 1);
+  assert.equal(f.badge(0).dataset.xAccountHandle, 'alicia');
+  assert.deepEqual(f.blocks, ['2']);
+});
+
+test('auto-block skips a write if another tab changed the session identity', async () => {
+  let resolveLookup;
+  const pending = new Promise(resolve => { resolveLookup = resolve; });
+  const f = contentFixture({
+    locations: { alice: 'India' },
+    autoBlock: {
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      idLookup: () => pending
+    }
+  });
+  await waitFor(() => f.calls.some(call => call.type === 'lookup-id'));
+  f.document.cookie = 'twid=u%3D3';
+  resolveLookup({ success: true, country: 'India' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.blocks, []);
+});
+
+test('auto-block waits for the account lock before looking up fresh metadata', async () => {
+  let acquire;
+  const held = new Promise(resolve => { acquire = resolve; });
+  let waiting = false;
+  const f = contentFixture({
+    locations: { alice: 'India' },
+    autoBlock: {
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      lock: async (_, callback) => {
+        waiting = true;
+        await held;
+        return callback();
+      },
+      idLookup: () => ({ success: true, country: 'India' })
+    }
+  });
+  await waitFor(() => waiting);
+  assert.equal(f.calls.some(call => call.type === 'lookup-id'), false);
+  acquire();
+  await waitFor(() => f.blocks.length === 1);
+  assert.deepEqual(f.blocks, ['2']);
+});
+
+test('turning auto-block off preserves location chips already checked by ID', async () => {
+  const settings = {};
+  const f = contentFixture({
+    locations: { alice: 'Japan' },
+    autoBlock: {
+      settings,
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      idLookup: () => ({ success: true, country: 'India' })
+    }
+  });
+  await waitFor(() => f.blocks.length === 1);
+  const badge = f.badge(0);
+  badge.style.fontFamily = 'serif';
+  settings.autoBlockSouthAsia = false;
+  f.settingsChanged({ autoBlockSouthAsia: { newValue: false } }, 'local');
+  await waitFor(() => badge.style.fontFamily !== 'serif');
+  assert.equal(badge.textContent, '🇮🇳 IND');
+  assert.equal(f.calls.filter(call => call.type === 'lookup-id').length, 1);
+});
+
+test('turning auto-block off during an ID lookup prevents the pending write', async () => {
+  let resolveLookup;
+  const pending = new Promise(resolve => { resolveLookup = resolve; });
+  const settings = {};
+  const f = contentFixture({
+    locations: { alice: 'Southern Asia' },
+    autoBlock: {
+      settings,
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      idLookup: () => pending
+    }
+  });
+  await waitFor(() => f.calls.some(call => call.type === 'lookup-id'));
+  settings.autoBlockSouthAsia = false;
+  f.settingsChanged({ autoBlockSouthAsia: { newValue: false } }, 'local');
+  resolveLookup({ success: true, country: 'India', accurate: true, createdCountryAccurate: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.blocks, []);
+});
+
+test('a failed ID lookup retries before the handle entry expires', async () => {
+  let now = Date.now();
+  let retry;
+  let calls = 0;
+  const f = contentFixture({
+    locations: { alice: 'India' },
+    autoBlock: {
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      clock: { now: () => now },
+      setTimeout(callback, delay) {
+        if (delay > 1000) {
+          retry = { callback, delay };
+          return null;
+        }
+        return setTimeout(callback, delay);
+      },
+      idLookup: () => {
+        calls++;
+        if (calls === 1) throw new Error('Message port disconnected');
+        if (calls === 2) return { success: false };
+        return { success: true, country: 'India' };
+      }
+    }
+  });
+  await waitFor(() => retry);
+  assert.deepEqual(f.blocks, []);
+  assert.ok(retry.delay < 30 * 60 * 1000);
+  const firstRetry = retry;
+  now += retry.delay;
+  retry.callback();
+  await waitFor(() => retry !== firstRetry);
+  assert.deepEqual(f.blocks, []);
+  now += retry.delay;
+  retry.callback();
+  await waitFor(() => f.blocks.length === 1);
+  assert.equal(calls, 3);
+  assert.deepEqual(f.blocks, ['2']);
+});
+
+test('a rejected lock or native block retries using a fresh ID lookup', async () => {
+  let now = Date.now();
+  let retry;
+  let locks = 0;
+  let writes = 0;
+  let lookups = 0;
+  const f = contentFixture({
+    locations: { alice: 'India' },
+    autoBlock: {
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      clock: { now: () => now },
+      setTimeout(callback, delay) {
+        if (delay > 1000) {
+          retry = { callback, delay };
+          return null;
+        }
+        return setTimeout(callback, delay);
+      },
+      lock: async (_, callback) => {
+        if (++locks === 1) throw new Error('Lock unavailable');
+        return callback();
+      },
+      idLookup: () => {
+        lookups++;
+        return { success: true, country: 'India' };
+      },
+      dispatch: () => {
+        if (++writes === 1) throw new Error('X could not block the account');
+      }
+    }
+  });
+  await waitFor(() => retry);
+  assert.deepEqual(f.blocks, []);
+  assert.equal(lookups, 0);
+  const firstRetry = retry;
+  now += retry.delay;
+  retry.callback();
+  await waitFor(() => retry !== firstRetry);
+  assert.deepEqual(f.blocks, []);
+  now += retry.delay;
+  retry.callback();
+  await waitFor(() => f.blocks.length === 1);
+  assert.equal(locks, 3);
+  assert.equal(lookups, 2);
+  assert.equal(writes, 2);
+});
+
+test('excluding uncertain cases requires both accuracy fields from the immutable ID lookup', async () => {
+  let certain = false;
+  const settings = { autoBlockUncertain: false };
+  const f = contentFixture({
+    locations: { alice: 'India' },
+    autoBlock: {
+      settings,
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      idLookup: () => ({ success: true, country: 'India', accurate: true,
+        createdCountryAccurate: certain ? true : null })
+    }
+  });
+  await waitFor(() => f.calls.some(call => call.type === 'lookup-id'));
+  assert.deepEqual(f.blocks, []);
+  certain = true;
+  f.settingsChanged({ autoBlockUncertain: { newValue: false } }, 'local');
+  await waitFor(() => f.blocks.length === 1);
+  assert.deepEqual(f.blocks, ['2']);
+});
 
 test('all DOM-mounted accounts are prefetched before they enter the viewport', async () => {
   const f = contentFixture();

@@ -22,6 +22,12 @@ You need Firefox 140 or newer.
 2. Open `about:addons` in Firefox, select the gear menu, and choose **Install Add-on From File**.
 3. Select the downloaded `.xpi`, then open or refresh [X](https://x.com/).
 
+While you are signed in to X, the extension checks the location of visible
+accounts by their X account ID and automatically blocks South Asia matches.
+This includes accounts with missing or uncertain accuracy data. In `about:addons`, open the
+extension's preferences to turn off automatic blocking or exclude uncertain
+accounts. To unblock an account, use X's blocked accounts settings.
+
 The signed extension stays installed after Firefox restarts. Starting with
 version 0.2.0, Firefox can update it automatically from GitHub Releases using
 the [update manifest](https://perennialtech.github.io/firefox-extensions/updates.json).
@@ -47,10 +53,12 @@ Temporary extensions are removed when Firefox restarts.
 
 ## Privacy and limitations
 
-Looking up an account sends its public handle to FxTwitter, along with normal
-request metadata such as your IP address. The extension does not send X cookies,
-credentials or authorization headers to FxTwitter, and does not require an X
-login of its own. Lookup results are cached in Firefox's local extension storage.
+Location lookups send public handles to FxTwitter. When automatic blocking
+is enabled, the extension also looks up public numeric X account IDs.
+Both lookups include normal request metadata such as your IP address.
+The extension does not send X cookies, credentials or authorization
+headers to FxTwitter, and does not require an X login of its own.
+Handle lookup results are cached in Firefox's local extension storage.
 
 Country names and codes use [ISO 3166-1](https://www.iso.org/iso-3166-country-codes.html)
 and English names from [Unicode CLDR](https://cldr.unicode.org/), with common

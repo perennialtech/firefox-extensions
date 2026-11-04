@@ -19,6 +19,7 @@
   "permissions": ["storage"],
   "host_permissions": ["https://api.fxtwitter.com/*"],
   "background": { "scripts": ["background.js"] },
+  "options_ui": { "page": "options.html" },
   "content_scripts": [
     {
       "matches": ["https://x.com/*", "https://twitter.com/*"],

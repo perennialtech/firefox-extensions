@@ -9,7 +9,10 @@
   const CHIP_FONT_FAMILY = 'TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
   const MAX_IN_FLIGHT = 4;
   const MAX_QUEUE = 150;
+  const LOOKUP_FAILURE_TTL = 30000;
+  const LOCATION_TTL = 30 * 60 * 1000;
   const entries = new Map();
+  const idEntries = new Map();
   const queued = new Set();
   const urgent = new Set();
   const inFlight = new Set();
@@ -163,6 +166,11 @@
   let scanTimer = null;
   let retryTimer = null;
   let retryAt = 0;
+  let xRequire;
+  let usersModule;
+  let autoBlockSettings;
+  const blockChecks = new Map();
+  const AUTO_BLOCK_DEFAULTS = { autoBlockSouthAsia: true, autoBlockUncertain: true };
 
   function locationLabel(location) {
     if (!location) return '';
@@ -392,6 +400,142 @@
     return rect.bottom > 0 && rect.top < height && rect.right > 0 && rect.left < width;
   }
 
+  function getXUsersModule() {
+    if (usersModule) return usersModule;
+    const page = window.wrappedJSObject;
+    const chunks = page?.webpackChunk_twitter_responsive_web;
+    if (!chunks) return null;
+    // Use X's native action so its request gets the current session and
+    // transaction headers and updates the same state as the Block menu.
+    if (!xRequire) {
+      chunks.push(cloneInto([['x-account-location-flags'], {}, require => {
+        xRequire = require.wrappedJSObject || require;
+      }], page, { cloneFunctions: true }));
+    }
+    const match = Object.entries(xRequire?.m || {}).find(([, factory]) => {
+      const source = Function.prototype.toString.call(factory);
+      return source.includes('ACTION_BLOCK') && source.includes('selectViewerUser:');
+    });
+    if (!match) return null;
+    usersModule = Object.values(xRequire(match[0])).find(module =>
+      typeof module?.block === 'function' && typeof module.select === 'function' &&
+      typeof module.selectViewerUser === 'function');
+    return usersModule;
+  }
+
+  function renderedAccount(link, username) {
+    try {
+      const node = link.wrappedJSObject;
+      if (!node) return null;
+      const key = Object.keys(node).find(key => key.startsWith('__reactFiber$'));
+      let fiber = node[key];
+      let root = fiber;
+      while (root?.return) root = root.return;
+      // React can retain the original DOM pointer after reusing a row.
+      if (root?.stateNode?.current && root.stateNode.current !== root) fiber = fiber.alternate;
+      let userId;
+      for (; fiber; fiber = fiber.return) {
+        const props = fiber.memoizedProps;
+        // X's tweet names carry userData, while list rows carry the same
+        // fields directly on their UserCell component.
+        const account = props?.userData || (props?.testID === 'UserCell' ? props : null);
+        if (!userId && account?.screenName?.toLowerCase() === username &&
+            typeof account.userId === 'string' && /^[0-9]+$/.test(account.userId)) {
+          userId = account.userId;
+        }
+        const store = props?.value?.store;
+        if (typeof store?.dispatch === 'function' && typeof store.getState === 'function') {
+          return userId ? { store, userId } : null;
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function sessionViewerId() {
+    // X itself checks twid for session changes from other tabs.
+    const cookie = document.cookie.match(/(?:^|;\s*)twid=([^;]*)/)?.[1];
+    return cookie?.match(/^u(?:%3D|=)([0-9]+)$/i)?.[1];
+  }
+
+  function visibleForBlock(link) {
+    return document.visibilityState === 'visible' &&
+      link.checkVisibility({ opacityProperty: true, visibilityProperty: true }) && visible(link);
+  }
+
+  function qualifiesForBlock(entry) {
+    return entry?.country && isSouthAsianLocation(entry.country) &&
+      (autoBlockSettings.autoBlockUncertain ||
+        (entry.accurate === true && entry.createdCountryAccurate === true));
+  }
+
+  function currentBlockTarget(store, users, viewerId, userId) {
+    if (!autoBlockSettings?.autoBlockSouthAsia || sessionViewerId() !== viewerId) return null;
+    const current = store.getState();
+    if (users.selectViewerUser(current)?.id_str !== viewerId ||
+        users.select(current, userId)?.blocking) return null;
+    return findHandles().find(item => {
+      if (item.placement !== 'header' || !visibleForBlock(item.link)) return false;
+      const account = renderedAccount(item.link, item.username);
+      return account?.userId === userId && account.store === store;
+    });
+  }
+
+  function retryBlockCheck(key) {
+    blockChecks.set(key, Date.now() + LOOKUP_FAILURE_TTL);
+    setTimeout(scheduleScan, LOOKUP_FAILURE_TTL);
+  }
+
+  async function checkAutoBlock(username, { store, userId }) {
+    try {
+      const viewerId = sessionViewerId();
+      if (!viewerId || viewerId === userId) return;
+      const key = viewerId + ':' + userId;
+      if (blockChecks.get(key) > Date.now()) return;
+      const users = getXUsersModule();
+      const state = store.getState();
+      if (users?.selectViewerUser(state)?.id_str !== viewerId || users.select(state, userId)?.blocking) return;
+      blockChecks.set(key, Date.now() + LOCATION_TTL);
+      await navigator.locks.request('x-account-location-flags:' + key, async () => {
+        if (!currentBlockTarget(store, users, viewerId, userId)) {
+          blockChecks.delete(key);
+          scheduleScan();
+          return;
+        }
+        // Confirm the displayed account's current location by immutable ID.
+        const result = await browser.runtime.sendMessage({ type: 'lookup-id', userId }).catch(() => null);
+        if (!result?.success) {
+          if (result?.retryAt > Date.now()) {
+            blockChecks.set(key, result.retryAt);
+            delayRetry(result.retryAt);
+          } else {
+            retryBlockCheck(key);
+          }
+          return;
+        }
+        const target = currentBlockTarget(store, users, viewerId, userId);
+        if (!target) {
+          blockChecks.delete(key);
+          scheduleScan();
+          return;
+        }
+        idEntries.set(userId, { ...result, expires: Date.now() + LOCATION_TTL });
+        paintUsername(target.username);
+        if (qualifiesForBlock(result)) {
+          await store.dispatch(users.block(userId));
+          if (users.select(store.getState(), userId)?.blocking !== true) retryBlockCheck(key);
+        }
+      }).catch(error => {
+        retryBlockCheck(key);
+        throw error;
+      });
+    } catch (_) {
+      console.warn('[X Account Location Flags] Could not automatically block @' + username);
+    }
+  }
+
   function paint({ link, username, placement }, entry) {
     // Profile descriptions can contain multiple mentions in one inline span.
     // Place each chip inside its link so it wraps with that mention, without
@@ -403,6 +547,15 @@
       child.dataset?.xAccountFlag === 'true');
     let badge = existing.find(child => child.dataset.xAccountHandle === username);
     for (const old of existing) if (old !== badge) old.remove();
+    const autoBlock = autoBlockSettings?.autoBlockSouthAsia;
+    if (placement === 'header' && (autoBlock || idEntries.size)) {
+      const account = renderedAccount(link, username);
+      if (account) {
+        if (autoBlock && visibleForBlock(link)) void checkAutoBlock(username, account);
+        const byId = idEntries.get(account.userId);
+        if (byId?.expires > Date.now()) entry = byId;
+      }
+    }
     const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
     const display = locationLabel(location);
     // Pending, empty and failed lookups do not create placeholder elements.
@@ -523,7 +676,7 @@
   }
 
   function storeLocation(username, result) {
-    entries.set(username, { ...result, expires: Date.now() + 30 * 60 * 1000 });
+    entries.set(username, { ...result, expires: Date.now() + LOCATION_TTL });
   }
 
   function refreshLocation(username, priority) {
@@ -553,10 +706,10 @@
             delayRetry(result.retryAt);
           } else {
             // Transient API failures should not become a permanent "no location".
-            entries.set(username, { country: null, expires: Date.now() + 30000 });
+            entries.set(username, { country: null, expires: Date.now() + LOOKUP_FAILURE_TTL });
           }
         }).catch(() => {
-          entries.set(username, { country: null, expires: Date.now() + 30000 });
+          entries.set(username, { country: null, expires: Date.now() + LOOKUP_FAILURE_TTL });
         }).finally(() => {
           inFlight.delete(username);
           paintUsername(username);
@@ -566,6 +719,15 @@
   }
 
   function scan() {
+    const now = Date.now();
+    for (const [key, expiry] of blockChecks) {
+      if (expiry <= now) blockChecks.delete(key);
+    }
+    for (const locations of [entries, idEntries]) {
+      for (const [key, entry] of locations) {
+        if (entry.expires <= now) locations.delete(key);
+      }
+    }
     const items = findHandles();
     // React can reuse an existing row while its name/handle are being changed.
     // Reconcile every chip with currently matched names, not just bio links.
@@ -619,6 +781,31 @@
     if (!target) return;
     const match = findHandles(target).find(({ link }) => visible(link));
     if (match) enqueue(match.username, true);
+  }
+
+  if (window.wrappedJSObject) {
+    let settingsRequest;
+    const refreshAutoBlockSettings = () => {
+      autoBlockSettings = null;
+      const request = browser.storage.local.get(AUTO_BLOCK_DEFAULTS);
+      settingsRequest = request;
+      void request.then(settings => {
+        if (settingsRequest !== request) return;
+        autoBlockSettings = {
+          autoBlockSouthAsia: settings.autoBlockSouthAsia !== false,
+          autoBlockUncertain: settings.autoBlockUncertain !== false
+        };
+        blockChecks.clear();
+        scheduleScan();
+      }).catch(() => {});
+    };
+    browser.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && Object.keys(AUTO_BLOCK_DEFAULTS).some(key => key in changes)) {
+        refreshAutoBlockSettings();
+      }
+    });
+    refreshAutoBlockSettings();
+    document.addEventListener('visibilitychange', scheduleScan);
   }
 
   document.addEventListener('pointerover', prioritize, true);

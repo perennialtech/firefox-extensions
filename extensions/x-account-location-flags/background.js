@@ -12,6 +12,7 @@
   const MAX_ACTIVE = 4;
   const REQUEST_INTERVAL = 200;
   const HANDLE = /^[a-zA-Z0-9_]{1,15}$/;
+  const USER_ID = /^[0-9]+$/;
 
   const cache = new Map();
   const pending = new Map();
@@ -102,6 +103,9 @@
         createdCountryAccurate: typeof created_country_accurate === 'boolean' ? created_country_accurate : null,
         source: typeof source === 'string' ? source.trim() || null : null
       };
+      // Block decisions need current metadata. Coalesce simultaneous ID
+      // lookups, but reserve the persistent cache for display by handle.
+      if (handle.startsWith('id:')) return { success: true, ...metadata };
       // A partial refresh cannot fill the new fields. Keep any still-valid
       // legacy location until a complete lookup succeeds or its TTL elapses.
       const cached = cache.get(handle);
@@ -185,8 +189,14 @@
   }
 
   browser.runtime.onMessage.addListener(message => {
-    if (message?.type !== 'lookup' || typeof message.username !== 'string' ||
-        !HANDLE.test(message.username)) return undefined;
-    return lookup(message.username.toLowerCase(), message.priority === true, message.refresh === true);
+    if (message?.type === 'lookup' && typeof message.username === 'string' &&
+        HANDLE.test(message.username)) {
+      return lookup(message.username.toLowerCase(), message.priority === true, message.refresh === true);
+    }
+    if (message?.type === 'lookup-id' && typeof message.userId === 'string' &&
+        USER_ID.test(message.userId)) {
+      return lookup('id:' + message.userId, true);
+    }
+    return undefined;
   });
 })();
