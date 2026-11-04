@@ -105,13 +105,16 @@
       };
       // Block decisions need current metadata. Coalesce simultaneous ID
       // lookups, but reserve the persistent cache for display by handle.
-      if (!handle.startsWith('id:')) {
-        cache.delete(handle);
-        cache.set(handle, {
-          ...metadata, expires: Date.now() + (country ? POSITIVE_TTL : EMPTY_TTL)
-        });
-        saveSoon();
-      }
+      if (handle.startsWith('id:')) return { success: true, ...metadata };
+      // A partial refresh cannot fill the new fields. Keep any still-valid
+      // legacy location until a complete lookup succeeds or its TTL elapses.
+      const cached = cache.get(handle);
+      if (!country && cached?.expires > Date.now()) return cachedResult(cached);
+      cache.delete(handle);
+      cache.set(handle, {
+        ...metadata, expires: Date.now() + (country ? POSITIVE_TTL : EMPTY_TTL)
+      });
+      saveSoon();
       return { success: true, ...metadata };
     } catch (_) {
       return { success: false };
@@ -153,17 +156,18 @@
     return { success: true, country, accurate, createdCountryAccurate, source };
   }
 
-  async function lookup(handle, priority) {
+  async function lookup(handle, priority, refresh = false) {
     await loadCache();
     const cached = cache.get(handle);
     const unexpired = cached?.expires > Date.now();
     // Legacy cache entries remain usable while the missing fields are refreshed.
-    if (unexpired && cached.createdCountryAccurate !== undefined && cached.source !== undefined) {
-      return cachedResult(cached);
+    const paused = Date.now() < blockedUntil;
+    if (unexpired) {
+      const complete = cached.createdCountryAccurate !== undefined && cached.source !== undefined;
+      if (complete || paused) return cachedResult(cached);
+      if (!refresh) return { ...cachedResult(cached), refresh: true };
     }
-    if (Date.now() < blockedUntil) {
-      return unexpired ? cachedResult(cached) : { success: false, retryAt: blockedUntil };
-    }
+    if (paused) return { success: false, retryAt: blockedUntil };
     if (pending.has(handle)) {
       if (priority) {
         const index = queue.findIndex(item => item.handle === handle);
@@ -187,7 +191,7 @@
   browser.runtime.onMessage.addListener(message => {
     if (message?.type === 'lookup' && typeof message.username === 'string' &&
         HANDLE.test(message.username)) {
-      return lookup(message.username.toLowerCase(), message.priority === true);
+      return lookup(message.username.toLowerCase(), message.priority === true, message.refresh === true);
     }
     if (message?.type === 'lookup-id' && typeof message.userId === 'string' &&
         USER_ID.test(message.userId)) {
