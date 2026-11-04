@@ -43,7 +43,8 @@ test('Firefox computes sans-serif fonts for all chip placements under serif pare
     await page.evaluate(() => {
       const locations = { alice: 'Japan', carol: 'East Asia', bob: 'Pakistan', dave: 'South Korea' };
       window.browser = { runtime: { sendMessage: async ({ username }) => ({
-        success: true, country: locations[username], accurate: true
+        success: true, country: locations[username], accurate: username !== 'alice',
+        createdCountryAccurate: true, source: username === 'alice' ? 'United States App Store' : null
       }) } };
     });
     await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
@@ -52,6 +53,11 @@ test('Firefox computes sans-serif fonts for all chip placements under serif pare
     const selectors = ['#regular', '#quoted', '#user-cell', '#bio'];
     await page.waitForFunction(selectors => selectors.every(selector =>
       document.querySelector(`${selector} > [data-x-account-flag="true"]`)), selectors);
+
+    const regularChip = page.locator('#regular > [data-x-account-flag]');
+    assert.equal(await regularChip.textContent(), '🇯🇵 JPN via USA');
+    assert.equal(await regularChip.evaluate(chip => getComputedStyle(chip).backgroundColor),
+      'rgb(252, 211, 77)');
 
     async function fontSnapshot() {
       return page.evaluate(selectors => selectors.map(selector => {
@@ -128,7 +134,7 @@ test('Firefox renders location tags for mentions in a profile description',
       window.lookupHandles = [];
       window.browser = { runtime: { sendMessage: async ({ username }) => {
         window.lookupHandles.push(username);
-        return { success: true, country: locations[username], accurate: true };
+        return { success: true, country: locations[username], accurate: true, createdCountryAccurate: true };
       } } };
     });
     await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
@@ -196,7 +202,7 @@ test('Firefox preserves multiple profile mentions sharing an inline parent',
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async ({ username }) => ({
         success: true, country: username === 'opencode' ? 'Japan' : 'Pakistan',
-        accurate: true
+        accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
@@ -251,7 +257,7 @@ test('Firefox restores profile link styles and contains long annotated handles',
     `);
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async () => ({
-        success: true, country: 'Japan', accurate: true
+        success: true, country: 'Japan', accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
@@ -339,7 +345,7 @@ test('Firefox contains long location labels and cleans up reused profile links',
     await page.evaluate(location => {
       window.browser = { runtime: { sendMessage: async ({ username }) => ({
         success: true, country: username === 'opencode' ? 'Japan' : location,
-        accurate: true
+        accurate: true, createdCountryAccurate: true
       }) } };
     }, longLocation);
     await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
@@ -412,7 +418,7 @@ test('Firefox renders image-only account names on timeline, post and profile',
       window.lookupHandles = [];
       window.browser = { runtime: { sendMessage: async ({ username }) => {
         window.lookupHandles.push(username);
-        return { success: true, country: 'India', accurate: true };
+        return { success: true, country: 'India', accurate: true, createdCountryAccurate: true };
       } } };
     });
     await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
@@ -465,7 +471,7 @@ test('Firefox recognises keycap-only emoji image names in every header layout',
     `);
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async () => ({
-        success: true, country: 'Japan', accurate: true
+        success: true, country: 'Japan', accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
@@ -523,7 +529,7 @@ test('Firefox annotates public X name-handle pairs without data-testid container
       window.browser = { runtime: { sendMessage: async ({ username }) => {
         window.lookupHandles.push(username);
         return { success: true,
-          country: username === 'alice' ? 'Japan' : 'India', accurate: true };
+          country: username === 'alice' ? 'Japan' : 'India', accurate: true, createdCountryAccurate: true };
       } } };
     });
     await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
@@ -591,7 +597,7 @@ test('Firefox annotates the plain-text main header of a public X profile',
       window.browser = { runtime: { sendMessage: async ({ username }) => {
         window.lookupHandles.push(username);
         return { success: true,
-          country: username === '_voltcrash' ? 'India' : 'Japan', accurate: true };
+          country: username === '_voltcrash' ? 'India' : 'Japan', accurate: true, createdCountryAccurate: true };
       } } };
     });
     await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
@@ -676,7 +682,7 @@ test('Firefox prefers the account name over avatar and unrelated image links',
       window.lookupHandles = [];
       window.browser = { runtime: { sendMessage: async ({ username }) => {
         window.lookupHandles.push(username);
-        return { success: true, country: 'India', accurate: true };
+        return { success: true, country: 'India', accurate: true, createdCountryAccurate: true };
       } } };
     });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
@@ -712,7 +718,7 @@ test('Firefox reconciles reused name rows and observes emoji alt changes',
       window.browser = { runtime: { sendMessage: async ({ username }) => {
         window.lookupHandles.push(username);
         return { success: true,
-          country: username === 'alice' ? 'India' : 'Japan', accurate: true };
+          country: username === 'alice' ? 'India' : 'Japan', accurate: true, createdCountryAccurate: true };
       } } };
     });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
@@ -758,7 +764,7 @@ test('Firefox keeps UserCell header badges out of same-account biography links',
     `);
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async () => ({
-        success: true, country: 'India', accurate: true
+        success: true, country: 'India', accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
@@ -796,7 +802,7 @@ test('Firefox keeps quoted-post name badges ahead of affiliation images',
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async ({ username }) => ({
         success: true, country: username === 'alice' ? 'Japan' : 'India',
-        accurate: true
+        accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
@@ -839,7 +845,7 @@ test('Firefox ignores emoji-bearing avatar and affiliation decorations before na
     `);
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async () => ({
-        success: true, country: 'Japan', accurate: true
+        success: true, country: 'Japan', accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
@@ -872,7 +878,7 @@ test('Firefox preserves legitimate account names containing affiliation-related 
     `);
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async () => ({
-        success: true, country: 'Japan', accurate: true
+        success: true, country: 'Japan', accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
@@ -899,7 +905,7 @@ test('Firefox does not reveal hidden account-name rows to insert badges',
     `);
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async () => ({
-        success: true, country: 'Japan', accurate: true
+        success: true, country: 'Japan', accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
@@ -938,7 +944,7 @@ test('Firefox detects unlinked public profile headers on profile subroutes',
       await page.goto('https://x.com/Alice/' + tab);
       await page.evaluate(() => {
         window.browser = { runtime: { sendMessage: async () => ({
-          success: true, country: 'Japan', accurate: true
+          success: true, country: 'Japan', accurate: true, createdCountryAccurate: true
         }) } };
       });
       await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
@@ -969,7 +975,7 @@ test('Firefox distinguishes @-prefixed account names from handle elements',
     `);
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async () => ({
-        success: true, country: 'Japan', accurate: true
+        success: true, country: 'Japan', accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
@@ -996,7 +1002,7 @@ test('Firefox restores original header row layout when chips disappear',
     `);
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async () => ({
-        success: true, country: 'Japan', accurate: true
+        success: true, country: 'Japan', accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
@@ -1060,7 +1066,7 @@ test('Firefox prefers a linked textual name over an adjacent unmarked emoji imag
     `);
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async () => ({
-        success: true, country: 'Japan', accurate: true
+        success: true, country: 'Japan', accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
@@ -1092,7 +1098,7 @@ test('Firefox keeps emoji-only name chips off adjacent metadata',
       window.lookupHandles = [];
       window.browser = { runtime: { sendMessage: async ({ username }) => {
         window.lookupHandles.push(username);
-        return { success: true, country: 'Japan', accurate: true };
+        return { success: true, country: 'Japan', accurate: true, createdCountryAccurate: true };
       } } };
     });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
@@ -1119,7 +1125,7 @@ test('Firefox annotates quoted-post native name links without explicit roles',
     `);
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async () => ({
-        success: true, country: 'India', accurate: true
+        success: true, country: 'India', accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
@@ -1144,7 +1150,7 @@ test('Firefox rescans rows revealed solely by an inline display change',
     `);
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async () => ({
-        success: true, country: 'India', accurate: true
+        success: true, country: 'India', accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
@@ -1174,7 +1180,7 @@ test('Firefox keeps new site inline layout values after badge removal',
     `);
     await page.evaluate(() => {
       window.browser = { runtime: { sendMessage: async () => ({
-        success: true, country: 'Japan', accurate: true
+        success: true, country: 'Japan', accurate: true, createdCountryAccurate: true
       }) } };
     });
     await page.addStyleTag({ path: path.join(__dirname, 'content.css') });

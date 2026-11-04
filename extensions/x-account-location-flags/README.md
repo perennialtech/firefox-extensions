@@ -4,7 +4,10 @@ A Firefox extension that shows X's **Account based in** metadata before account
 names in posts, replies and user lists (including quoted posts). Countries and
 territories appear with a flag, when supported by the system, and an ISO 3166-1
 alpha-3 code (such as 🇯🇵 JPN); geographic regions use short labels (such as
-SE Asia or LATAM). Southern Asia and its countries use pale red chips.
+SE Asia or LATAM). When X reports a connection source, the chip adds it
+after `via`, for example `JPN via USA` or `JPN via Web`. Southern Asia and
+its countries use pale red chips. Other chips are amber if X omits or marks
+either the location or the account creation country as uncertain.
 
 Locations come from [FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/)
 and **do not establish where a person actually lives or is currently located**.

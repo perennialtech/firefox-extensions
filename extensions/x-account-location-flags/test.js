@@ -10,7 +10,7 @@ function load(name, context) {
   });
 }
 
-function response(status = 200, data = { code: 200, about_account: { based_in: 'Japan', location_accurate: true } }, headers = {}) {
+function response(status = 200, data = { code: 200, about_account: { based_in: 'Japan', location_accurate: true, created_country_accurate: true } }, headers = {}) {
   return { ok: status >= 200 && status < 300, status,
     headers: new Headers(headers), json: async () => data };
 }
@@ -34,8 +34,8 @@ function backgroundFixture(fetchImpl = async () => response(), storage = {}) {
       return fetchImpl(url, options);
     }
   });
-  async function send(username, priority = false) {
-    return handlers[0]({ type: 'lookup', username, priority });
+  async function send(username, priority = false, refresh = false) {
+    return handlers[0]({ type: 'lookup', username, priority, refresh });
   }
   return { browser, storage, calls, send };
 }
@@ -64,7 +64,7 @@ function contrastRatio(foreground, background) {
 test('FxTwitter about endpoint, no cookies, country and accuracy returned', async () => {
   const f = backgroundFixture();
   assert.equal(JSON.stringify(await f.send('alice')), JSON.stringify({
-    success: true, country: 'Japan', accurate: true
+    success: true, country: 'Japan', accurate: true, createdCountryAccurate: true, source: null
   }));
   assert.equal(f.calls[0].url, 'https://api.fxtwitter.com/2/profile/alice/about');
   assert.equal(f.calls[0].options.credentials, 'omit');
@@ -73,6 +73,63 @@ test('FxTwitter about endpoint, no cookies, country and accuracy returned', asyn
   assert.equal(f.calls[0].options.headers, undefined);
   await waitFor(() => !!f.storage['fxtwitter-locations-v1']?.alice);
   assert.equal(f.storage['fxtwitter-locations-v1'].alice.country, 'Japan');
+});
+
+test('older cache entries refresh once and preserve source and accuracy across restarts', async () => {
+  const key = 'fxtwitter-locations-v1';
+  const storage = {
+    [key]: { alice: { country: 'Japan', accurate: true, expires: Date.now() + 60000 } }
+  };
+  const f = backgroundFixture(async () => response(200, { code: 200, about_account: {
+    based_in: 'Japan', created_country_accurate: false, source: ' United States App Store '
+  } }), storage);
+  const expected = {
+    success: true, country: 'Japan', accurate: null,
+    createdCountryAccurate: false, source: 'United States App Store'
+  };
+  assert.deepEqual({ ...await f.send('alice') }, {
+    success: true, country: 'Japan', accurate: true, createdCountryAccurate: null, source: null,
+    refresh: true
+  });
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual({ ...await f.send('alice', false, true) }, expected);
+  assert.equal(f.calls.length, 1);
+  await waitFor(() => storage[key]?.alice?.source === expected.source);
+  const restart = backgroundFixture(undefined, storage);
+  assert.deepEqual({ ...await restart.send('alice') }, expected);
+  assert.equal(restart.calls.length, 0);
+});
+
+test('legacy cached locations survive a failed refresh and service cooldown', async () => {
+  const storage = {
+    'fxtwitter-locations-v1': {
+      alice: { country: 'Japan', accurate: true, expires: Date.now() + 60000 }
+    }
+  };
+  const f = backgroundFixture(async () => response(429, { code: 429 }), storage);
+  const expected = {
+    success: true, country: 'Japan', accurate: true, createdCountryAccurate: null, source: null
+  };
+  assert.deepEqual({ ...await f.send('alice', false, true) }, expected);
+  assert.deepEqual({ ...await f.send('alice') }, expected);
+  assert.equal((await f.send('uncached')).success, false);
+  assert.equal(f.calls.length, 1);
+  assert.equal(storage['fxtwitter-locations-v1'].alice.country, 'Japan');
+});
+
+test('an empty metadata refresh does not replace an unexpired legacy location', async () => {
+  const expires = Date.now() + 60000;
+  const storage = {
+    'fxtwitter-locations-v1': {
+      alice: { country: 'Japan', accurate: true, expires }
+    }
+  };
+  const f = backgroundFixture(async () => response(200, { code: 200 }), storage);
+  assert.deepEqual({ ...await f.send('alice', false, true) }, {
+    success: true, country: 'Japan', accurate: true, createdCountryAccurate: null, source: null
+  });
+  assert.equal(f.calls.length, 1);
+  assert.equal(storage['fxtwitter-locations-v1'].alice.expires, expires);
 });
 
 test('case-insensitive handle cache avoids repeat requests', async () => {
@@ -310,7 +367,7 @@ function contentFixture(options = {}) {
           success: true,
           country: Object.hasOwn(locations, message.username)
             ? locations[message.username] : 'Japan',
-          accurate: true
+          accurate: true, createdCountryAccurate: true
         };
       }
     }
@@ -334,6 +391,25 @@ test('all DOM-mounted accounts are prefetched before they enter the viewport', a
   assert.deepEqual(f.calls.map(c => c.username).sort(), ['alice', 'bob', 'carol']);
 });
 
+test('legacy chips stay visible while their metadata refresh is pending', async () => {
+  let finish;
+  const refresh = new Promise(resolve => { finish = resolve; });
+  const f = contentFixture({
+    accounts: [{ handle: 'Alice', name: 'Alice' }],
+    lookup: ({ refresh: shouldRefresh }) => shouldRefresh ? refresh : {
+      success: true, country: 'Japan', accurate: true, refresh: true
+    }
+  });
+  await waitFor(() => f.badge(0)?.textContent === '🇯🇵 JPN');
+  assert.equal(f.badge(0).style.backgroundColor, '#fcd34d');
+  finish({
+    success: true, country: 'Japan', accurate: true,
+    createdCountryAccurate: true, source: 'United States App Store'
+  });
+  await waitFor(() => f.badge(0)?.textContent === '🇯🇵 JPN via USA');
+  assert.equal(f.badge(0).style.backgroundColor, '#f5f5f5');
+});
+
 test('chip takes its intrinsic width immediately BEFORE display-name link', async () => {
   const f = contentFixture();
   await waitFor(() => f.badge(0)?.textContent === '🇯🇵 JPN');
@@ -350,6 +426,35 @@ test('chip takes its intrinsic width immediately BEFORE display-name link', asyn
   assert.equal(badge.style.backgroundColor, '#f5f5f5');
   assert.equal(badge.style.paddingInline, '0.35rem');
   assert.equal(name.textContent, 'Alice');
+});
+
+test('chips show connection sources and reflect both accuracy fields with South Asia precedence', async () => {
+  const cases = [
+    [{ country: 'Japan', createdCountryAccurate: true, source: 'United States App Store' },
+      '🇯🇵 JPN via USA', '#fcd34d'],
+    [{ country: 'Japan', accurate: true, createdCountryAccurate: true, source: 'Web' },
+      '🇯🇵 JPN via Web', '#f5f5f5'],
+    [{ country: 'Japan', accurate: false, createdCountryAccurate: true, source: 'Canada Google Play Store' },
+      '🇯🇵 JPN via CAN', '#fcd34d'],
+    [{ country: 'Japan', accurate: true, createdCountryAccurate: false, source: 'Unknown Store' },
+      '🇯🇵 JPN via Unknown Store', '#fcd34d'],
+    [{ country: 'Japan', accurate: true },
+      '🇯🇵 JPN', '#fcd34d'],
+    [{ country: 'India', accurate: false, source: 'Web' },
+      '🇮🇳 IND via Web', '#fca5a5']
+  ];
+  const f = contentFixture({
+    accounts: cases.map((_, i) => ({ handle: 'Source' + i, name: 'Source ' + i })),
+    lookup: ({ username }) => ({ success: true, ...cases[Number(username.slice(6))][0] })
+  });
+  await waitFor(() => cases.every((_, i) => f.badge(i)));
+  for (const [i, [, text, background]] of cases.entries()) {
+    assert.equal(f.badge(i).textContent, text);
+    assert.equal(f.badge(i).style.backgroundColor, background);
+  }
+  assert.match(f.badge(0).title, /connected via United States App Store/);
+  assert.match(f.badge(0).title, /has not confirmed this location/);
+  assert.match(f.badge(4).title, /has not confirmed the account creation country/);
 });
 
 test('header, quoted-post and bio chips assign and reapply the sans-serif font stack', async () => {
@@ -643,7 +748,7 @@ test('no placeholder is inserted while account locations are loading', async () 
   const f = contentFixture({ lookup: () => pending });
   assert.equal(f.badge(0), undefined);
   assert.deepEqual(f.rows[0].children, [f.links[0]]);
-  finish({ success: true, country: 'East Asia' });
+  finish({ success: true, country: 'East Asia', accurate: true, createdCountryAccurate: true });
   await waitFor(() => f.badge(0)?.textContent === 'E Asia');
   assert.equal(f.rows[0].children[0], f.badge(0));
   assert.equal(f.badge(0).style.width, undefined);

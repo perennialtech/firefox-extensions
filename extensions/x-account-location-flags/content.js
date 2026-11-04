@@ -158,6 +158,7 @@
   ]);
   const SOUTH_ASIA_BACKGROUND = '#fca5a5'; // Tailwind red-300
   const SOUTH_ASIA_TEXT = '#7f1d1d'; // Tailwind red-900
+  const UNCERTAIN_BACKGROUND = '#fcd34d'; // Tailwind amber-300
 
   let scanTimer = null;
   let retryTimer = null;
@@ -174,6 +175,11 @@
     const region = regionCodes.get(key);
     if (region) return regionAbbreviations[region] || regionNames.of(region);
     return otherAbbreviations[key] || location;
+  }
+
+  function sourceLabel(source) {
+    const country = source.replace(/\s+(?:App Store|Google Play(?: Store)?)$/i, '');
+    return countryCodes.get(countries.get(locationKey(country))) || source;
   }
 
   function isSouthAsianLocation(location) {
@@ -448,16 +454,21 @@
       }
     }
 
-    if (badge.textContent !== display) badge.textContent = display;
+    const text = entry.source ? display + ' via ' + sourceLabel(entry.source) : display;
+    if (badge.textContent !== text) badge.textContent = text;
     badge.style.fontFamily = CHIP_FONT_FAMILY;
     badge.style.fontSize = '0.75rem';
     badge.style.paddingInline = '0.35rem';
     const southAsia = isSouthAsianLocation(location);
-    badge.style.backgroundColor = southAsia ? SOUTH_ASIA_BACKGROUND : '#f5f5f5';
+    const confirmed = entry.accurate === true && entry.createdCountryAccurate === true;
+    badge.style.backgroundColor = southAsia ? SOUTH_ASIA_BACKGROUND :
+      confirmed ? '#f5f5f5' : UNCERTAIN_BACKGROUND;
     badge.style.color = southAsia ? SOUTH_ASIA_TEXT : '#171717';
     badge.style.borderRadius = '0';
     const label = 'Account based in ' + location + ' (according to X)' +
-      (entry.accurate === false ? '; X marks this location as uncertain' : '');
+      (entry.source ? '; connected via ' + entry.source : '') +
+      (entry.accurate !== true ? '; X has not confirmed this location' : '') +
+      (entry.createdCountryAccurate !== true ? '; X has not confirmed the account creation country' : '');
     badge.title = label;
     badge.setAttribute('aria-label', label);
   }
@@ -511,6 +522,20 @@
     }, Math.max(1, retryAt - Date.now()));
   }
 
+  function storeLocation(username, result) {
+    entries.set(username, { ...result, expires: Date.now() + 30 * 60 * 1000 });
+  }
+
+  function refreshLocation(username, priority) {
+    void browser.runtime.sendMessage({ type: 'lookup', username, priority, refresh: true })
+      .then(result => {
+        if (result?.success) {
+          storeLocation(username, result);
+          paintUsername(username);
+        }
+      }).catch(() => {});
+  }
+
   function pump() {
     if (Date.now() < retryAt) return;
     while (inFlight.size < MAX_IN_FLIGHT && queue.length) {
@@ -522,8 +547,8 @@
       void browser.runtime.sendMessage({ type: 'lookup', username, priority })
         .then(result => {
           if (result?.success) {
-            entries.set(username, { country: result.country, accurate: result.accurate,
-              expires: Date.now() + 30 * 60 * 1000 });
+            storeLocation(username, result);
+            if (result.refresh) refreshLocation(username, priority);
           } else if (result?.retryAt > Date.now()) {
             delayRetry(result.retryAt);
           } else {
