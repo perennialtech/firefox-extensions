@@ -419,7 +419,7 @@ function contentFixture(options = {}) {
         memoizedProps: profile && { userData: { userId: profile.id_str, screenName: profile.screen_name } },
         return: { memoizedProps: { value: { store } } }
       } };
-      link.checkVisibility = () => true;
+      link.checkVisibility = ({ opacityProperty }) => !opacityProperty || !accounts[i].transparent;
     }
     browser.storage = {
       local: { async get(defaults) { return { ...defaults, ...options.autoBlock.settings }; } },
@@ -440,10 +440,10 @@ function contentFixture(options = {}) {
 }
 
 test('auto-block defaults include uncertain locations and verify the exact X identity', async () => {
-  const handles = ['Viewer', 'Uncertain', 'Reused', 'AlreadyBlocked', 'Offscreen', 'Outside'];
+  const handles = ['Viewer', 'Uncertain', 'Reused', 'AlreadyBlocked', 'Offscreen', 'Outside', 'Transparent'];
   const f = contentFixture({
     accounts: handles.map((handle, i) => ({
-      handle, name: handle, type: 'User-Name', offscreen: i === 4
+      handle, name: handle, type: 'User-Name', offscreen: i === 4, transparent: i === 6
     })),
     locations: Object.fromEntries(handles.map(handle => [
       handle.toLowerCase(), handle === 'Outside' ? 'Japan' : 'India'
@@ -600,16 +600,26 @@ test('a failed ID lookup retries before the handle entry expires', async () => {
         }
         return setTimeout(callback, delay);
       },
-      idLookup: () => ++calls === 1 ? { success: false } : { success: true, country: 'India' }
+      idLookup: () => {
+        calls++;
+        if (calls === 1) throw new Error('Message port disconnected');
+        if (calls === 2) return { success: false };
+        return { success: true, country: 'India' };
+      }
     }
   });
   await waitFor(() => retry);
   assert.deepEqual(f.blocks, []);
   assert.ok(retry.delay < 30 * 60 * 1000);
+  const firstRetry = retry;
+  now += retry.delay;
+  retry.callback();
+  await waitFor(() => retry !== firstRetry);
+  assert.deepEqual(f.blocks, []);
   now += retry.delay;
   retry.callback();
   await waitFor(() => f.blocks.length === 1);
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
   assert.deepEqual(f.blocks, ['2']);
 });
 

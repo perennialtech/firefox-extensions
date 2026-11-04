@@ -456,7 +456,7 @@
 
   function visibleForBlock(link) {
     return document.visibilityState === 'visible' &&
-      link.checkVisibility({ visibilityProperty: true }) && visible(link);
+      link.checkVisibility({ opacityProperty: true, visibilityProperty: true }) && visible(link);
   }
 
   function qualifiesForBlock(entry) {
@@ -499,7 +499,7 @@
           return;
         }
         // Confirm the displayed account's current location by immutable ID.
-        const result = await browser.runtime.sendMessage({ type: 'lookup-id', userId });
+        const result = await browser.runtime.sendMessage({ type: 'lookup-id', userId }).catch(() => null);
         if (!result?.success) {
           if (result?.retryAt > Date.now()) {
             blockChecks.set(key, result.retryAt);
@@ -510,9 +510,11 @@
           }
           return;
         }
-        if (canBlockNow(store, users, viewerId, userId, username) && qualifiesForBlock(result)) {
-          await store.dispatch(users.block(userId));
+        if (!canBlockNow(store, users, viewerId, userId, username)) {
+          blockChecks.delete(key);
+          return;
         }
+        if (qualifiesForBlock(result)) await store.dispatch(users.block(userId));
       });
     } catch (_) {
       console.warn('[X Account Location Flags] Could not automatically block @' + username);
