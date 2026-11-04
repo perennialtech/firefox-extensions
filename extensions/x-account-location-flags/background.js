@@ -31,8 +31,7 @@
         const paused = Number(stored[RATE_LIMIT_KEY]);
         if (Number.isFinite(paused) && paused > now) blockedUntil = paused;
         for (const [handle, value] of Object.entries(stored[STORAGE_KEY] || {})) {
-          if ((HANDLE.test(handle) || (handle.startsWith('id:') && USER_ID.test(handle.slice(3)))) &&
-              value &&
+          if (/^[a-z0-9_]{1,15}$/.test(handle) && value &&
               value.expires > now &&
               (value.country === null || typeof value.country === 'string') &&
               (value.accurate === null || typeof value.accurate === 'boolean') &&
@@ -104,11 +103,15 @@
         createdCountryAccurate: typeof created_country_accurate === 'boolean' ? created_country_accurate : null,
         source: typeof source === 'string' ? source.trim() || null : null
       };
-      cache.delete(handle);
-      cache.set(handle, {
-        ...metadata, expires: Date.now() + (country ? POSITIVE_TTL : EMPTY_TTL)
-      });
-      saveSoon();
+      // Block decisions need current metadata. Coalesce simultaneous ID
+      // lookups, but reserve the persistent cache for display by handle.
+      if (!handle.startsWith('id:')) {
+        cache.delete(handle);
+        cache.set(handle, {
+          ...metadata, expires: Date.now() + (country ? POSITIVE_TTL : EMPTY_TTL)
+        });
+        saveSoon();
+      }
       return { success: true, ...metadata };
     } catch (_) {
       return { success: false };

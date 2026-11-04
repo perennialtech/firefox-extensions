@@ -9,6 +9,7 @@
   const CHIP_FONT_FAMILY = 'TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
   const MAX_IN_FLIGHT = 4;
   const MAX_QUEUE = 150;
+  const LOOKUP_FAILURE_TTL = 30000;
   const entries = new Map();
   const queued = new Set();
   const urgent = new Set();
@@ -416,20 +417,41 @@
     if (!match) return null;
     usersModule = Object.values(xRequire(match[0])).find(module =>
       typeof module?.block === 'function' && typeof module.select === 'function' &&
-      typeof module.selectByScreenName === 'function' && typeof module.selectViewerUser === 'function');
+      typeof module.selectViewerUser === 'function');
     return usersModule;
   }
 
-  function getXStore(link) {
-    // The name link is already mounted inside the app's Redux provider.
+  function renderedAccount(link, username) {
     const node = link.wrappedJSObject;
     if (!node) return null;
     const key = Object.keys(node).find(key => key.startsWith('__reactFiber$'));
-    for (let fiber = node[key]; fiber; fiber = fiber.return) {
-      const store = fiber.memoizedProps?.value?.store;
-      if (typeof store?.dispatch === 'function' && typeof store.getState === 'function') return store;
+    let fiber = node[key];
+    let root = fiber;
+    while (root?.return) root = root.return;
+    // React can retain the original DOM pointer after reusing a row.
+    if (root?.stateNode?.current && root.stateNode.current !== root) fiber = fiber.alternate;
+    let userId;
+    for (; fiber; fiber = fiber.return) {
+      const props = fiber.memoizedProps;
+      // X's tweet names carry userData, while list rows carry the same
+      // fields directly on their UserCell component.
+      const account = props?.userData || (props?.testID === 'UserCell' ? props : null);
+      if (!userId && account?.screenName?.toLowerCase() === username &&
+          typeof account.userId === 'string' && /^[0-9]+$/.test(account.userId)) {
+        userId = account.userId;
+      }
+      const store = props?.value?.store;
+      if (typeof store?.dispatch === 'function' && typeof store.getState === 'function') {
+        return userId ? { store, userId } : null;
+      }
     }
     return null;
+  }
+
+  function sessionViewerId() {
+    // X itself checks twid for session changes from other tabs.
+    const cookie = document.cookie.match(/(?:^|;\s*)twid=([^;]*)/)?.[1];
+    return cookie?.match(/^u(?:%3D|=)([0-9]+)$/i)?.[1];
   }
 
   function visibleForBlock(link) {
@@ -438,44 +460,57 @@
   }
 
   function qualifiesForBlock(entry) {
-    return autoBlockSettings?.autoBlockSouthAsia && entry?.country &&
-      isSouthAsianLocation(entry.country) && (autoBlockSettings.autoBlockUncertain ||
+    return entry?.country && isSouthAsianLocation(entry.country) &&
+      (autoBlockSettings.autoBlockUncertain ||
         (entry.accurate === true && entry.createdCountryAccurate === true));
   }
 
-  async function checkAutoBlock({ link, username, placement }, entry) {
-    if (placement !== 'header' || !qualifiesForBlock(entry) || !visibleForBlock(link)) return;
-    try {
-      const store = getXStore(link);
-      const users = store && getXUsersModule();
-      if (!users) return;
-      const state = store.getState();
-      const viewerId = users.selectViewerUser(state)?.id_str;
-      const target = users.selectByScreenName(state, username);
-      if (!viewerId || !target?.id_str || viewerId === target.id_str || target.blocking) return;
-      const userId = target.id_str;
-      const key = viewerId + ':' + userId;
-      const checkedUntil = blockChecks.get(key);
-      if (checkedUntil > Date.now()) return;
-      blockChecks.set(key, entry.expires);
-      // Resolve metadata by immutable ID before any write. A cached handle
-      // lookup can refer to another account if a handle was reassigned.
-      const result = await browser.runtime.sendMessage({ type: 'lookup-id', userId });
-      if (!result?.success) {
-        if (result?.retryAt > Date.now()) {
-          blockChecks.set(key, result.retryAt);
-          delayRetry(result.retryAt);
+  function canBlockNow(store, users, viewerId, userId, username) {
+    if (!autoBlockSettings?.autoBlockSouthAsia || sessionViewerId() !== viewerId) return false;
+    const current = store.getState();
+    const user = users.select(current, userId);
+    return users.selectViewerUser(current)?.id_str === viewerId && !user?.blocking &&
+      findHandles().some(item => {
+        if (item.username !== username || item.placement !== 'header' || !visibleForBlock(item.link)) {
+          return false;
         }
-        return;
-      }
-      if (!qualifiesForBlock(result)) return;
-      await navigator.locks.request('x-account-location-flags:' + key, { ifAvailable: true }, async lock => {
-        if (!lock || !qualifiesForBlock(result) || !findHandles().some(item =>
-          item.username === username && item.placement === 'header' && visibleForBlock(item.link))) return;
-        const current = store.getState();
-        const user = users.select(current, userId);
-        if (users.selectViewerUser(current)?.id_str === viewerId &&
-            user?.screen_name?.toLowerCase() === username && !user.blocking) {
+        const account = renderedAccount(item.link, username);
+        return account?.userId === userId && account.store === store;
+      });
+  }
+
+  async function checkAutoBlock({ link, username, placement }, entry) {
+    if (placement !== 'header' || !autoBlockSettings?.autoBlockSouthAsia || !entry?.country ||
+        !isSouthAsianLocation(entry.country) || !visibleForBlock(link)) return;
+    try {
+      const account = renderedAccount(link, username);
+      const viewerId = sessionViewerId();
+      if (!account || !viewerId || viewerId === account.userId) return;
+      const { store, userId } = account;
+      const key = viewerId + ':' + userId;
+      if (blockChecks.get(key) > Date.now()) return;
+      const users = getXUsersModule();
+      const state = store.getState();
+      if (users?.selectViewerUser(state)?.id_str !== viewerId || users.select(state, userId)?.blocking) return;
+      blockChecks.set(key, entry.expires);
+      await navigator.locks.request('x-account-location-flags:' + key, async () => {
+        if (!canBlockNow(store, users, viewerId, userId, username)) {
+          blockChecks.delete(key);
+          return;
+        }
+        // Confirm the displayed account's current location by immutable ID.
+        const result = await browser.runtime.sendMessage({ type: 'lookup-id', userId });
+        if (!result?.success) {
+          if (result?.retryAt > Date.now()) {
+            blockChecks.set(key, result.retryAt);
+            delayRetry(result.retryAt);
+          } else {
+            blockChecks.set(key, Date.now() + LOOKUP_FAILURE_TTL);
+            setTimeout(scheduleScan, LOOKUP_FAILURE_TTL);
+          }
+          return;
+        }
+        if (canBlockNow(store, users, viewerId, userId, username) && qualifiesForBlock(result)) {
           await store.dispatch(users.block(userId));
         }
       });
@@ -631,10 +666,10 @@
             delayRetry(result.retryAt);
           } else {
             // Transient API failures should not become a permanent "no location".
-            entries.set(username, { country: null, expires: Date.now() + 30000 });
+            entries.set(username, { country: null, expires: Date.now() + LOOKUP_FAILURE_TTL });
           }
         }).catch(() => {
-          entries.set(username, { country: null, expires: Date.now() + 30000 });
+          entries.set(username, { country: null, expires: Date.now() + LOOKUP_FAILURE_TTL });
         }).finally(() => {
           inFlight.delete(username);
           paintUsername(username);
