@@ -1,3 +1,18 @@
+/* Keep name chips in one row without overriding X's visibility rules. */
+@layer x-account-location-flags {
+  div[data-x-account-flag-header] {
+    display: flex;
+    flex-direction: row !important;
+    align-items: center !important;
+  }
+
+  span[data-x-account-flag-header] {
+    display: inline-flex;
+    flex-direction: row !important;
+    align-items: center !important;
+  }
+}
+
 /* Keep each tagged profile mention together without changing X's inline styles. */
 [data-testid="UserDescription"] a:has(> [data-x-account-flag="true"]) {
   display: inline-flex;

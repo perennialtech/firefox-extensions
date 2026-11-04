@@ -372,3 +372,826 @@ test('Firefox contains long location labels and cleans up reused profile links',
       color: 'rebeccapurple'
     });
   });
+
+test('Firefox renders image-only account names on timeline, post and profile',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section id="timeline" data-testid="User-Name">
+        <div id="timeline-name-row">
+          <a href="/_voltcrash" role="link"><div dir="ltr"><span>
+            <img alt="⚡️" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=">
+          </span></div></a>
+        </div>
+        <a href="/_voltcrash" role="link" tabindex="-1">
+          <div dir="ltr">@_voltcrash</div>
+        </a>
+        <div id="timeline-time" dir="ltr">15h</div>
+      </section>
+      <section id="post" data-testid="User-Name">
+        <div id="post-name-row">
+          <a href="/_voltcrash" role="link"><div dir="ltr"><span>
+            <img alt="⚡️" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=">
+          </span></div></a>
+        </div>
+        <a href="/_voltcrash" role="link" tabindex="-1">
+          <div dir="ltr">@_voltcrash</div>
+        </a>
+        <div dir="ltr">9:59 PM · Nov 2, 2026</div>
+      </section>
+      <section id="profile" data-testid="UserName">
+        <div id="profile-name-row"><div dir="ltr"><span>
+          <img alt="⚡️" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=">
+        </span></div></div>
+        <div tabindex="-1"><div dir="ltr">@_voltcrash</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.lookupHandles = [];
+      window.browser = { runtime: { sendMessage: async ({ username }) => {
+        window.lookupHandles.push(username);
+        return { success: true, country: 'India', accurate: true };
+      } } };
+    });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+
+    const rows = ['#timeline-name-row', '#post-name-row', '#profile-name-row'];
+    await page.waitForFunction(rows => rows.every(row =>
+      document.querySelector(`${row} > [data-x-account-flag="true"]`)), rows);
+    assert.deepEqual(await page.evaluate(rows => rows.map(row => {
+      const nameRow = document.querySelector(row);
+      const chip = nameRow.firstElementChild;
+      return {
+        text: chip.textContent,
+        handle: chip.dataset.xAccountHandle,
+        isFirst: chip.nextElementSibling?.querySelector('img')?.alt === '⚡️',
+        count: nameRow.querySelectorAll('[data-x-account-flag="true"]').length
+      };
+    }), rows), rows.map(() => ({
+      text: '🇮🇳 IND', handle: '_voltcrash', isFirst: true, count: 1
+    })));
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['_voltcrash']);
+    assert.equal(await page.locator('#timeline-time [data-x-account-flag]').count(), 0);
+
+    await page.evaluate(() => window.dispatchEvent(new Event('scroll')));
+    await page.waitForTimeout(200);
+    assert.deepEqual(await page.evaluate(rows => rows.map(row =>
+      document.querySelectorAll(`${row} > [data-x-account-flag="true"]`).length), rows),
+    [1, 1, 1]);
+  });
+
+test('Firefox recognises keycap-only emoji image names in every header layout',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    const linked = (id, emoji) => `
+      <section data-testid="User-Name">
+        <div id="${id}"><a href="/Alice" role="link">
+          <div dir="ltr"><img alt="${emoji}"></div>
+        </a></div>
+        <a href="/Alice" role="link" tabindex="-1">@Alice</a>
+      </section>`;
+    await page.setContent(`
+      ${linked('timeline-keycap', '1️⃣')}
+      ${linked('post-keycap', '#️⃣')}
+      <section data-testid="UserName">
+        <div id="profile-keycap"><div dir="ltr"><img alt="*️⃣"></div></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    const rows = ['#timeline-keycap', '#post-keycap', '#profile-keycap'];
+    await page.waitForFunction(rows => rows.every(row =>
+      document.querySelector(`${row} > [data-x-account-flag="true"]`)), rows);
+    for (const row of rows) {
+      assert.deepEqual(await page.locator(`${row} > [data-x-account-flag]`)
+        .allTextContents(), ['🇯🇵 JPN']);
+    }
+  });
+
+test('Firefox annotates public X name-handle pairs without data-testid containers',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    // Faithful to the public logged-out X layout: paired links within a div,
+    // one for the name and one for the handle, with no role or tabindex.
+    await page.setContent(`
+      <section id="public-profile">
+        <div id="profile-pair" class="flex items-center gap-1 min-w-0">
+          <span id="profile-name" class="flex shrink-0">
+            <a href="/_voltcrash" class="x-link">
+              <div class="font-bold text-primary">⚡️</div>
+            </a>
+          </span>
+          <span id="profile-handle" class="flex">
+            <a href="/_voltcrash"><span>@_voltcrash</span></a>
+          </span>
+        </div>
+      </section>
+      <section id="public-post">
+        <div class="flex gap-2">
+          <a href="/_voltcrash"><div class="x-avatar"><img alt="⚡️"></div></a>
+          <div id="post-pair" class="flex flex-col items-start">
+            <span id="post-name"><a href="/_voltcrash" class="x-link">
+              <div class="font-bold text-primary"><img alt="1️⃣"></div>
+            </a></span>
+            <span id="post-handle"><a href="/_voltcrash">
+              <span>@_voltcrash</span>
+            </a></span>
+          </div>
+        </div>
+      </section>
+      <div id="avatar-only">
+        <span><a href="/Bob"><div class="x-avatar"><img alt="⚡️"></div></a></span>
+        <span><a href="/Bob">@Bob</a></span>
+      </div>
+      <div id="bio"><a href="/Alice">@Alice</a></div>
+      <a id="follow" aria-label="Follow" href="/_voltcrash">Follow</a>
+    `);
+    await page.evaluate(() => {
+      window.lookupHandles = [];
+      window.browser = { runtime: { sendMessage: async ({ username }) => {
+        window.lookupHandles.push(username);
+        return { success: true,
+          country: username === 'alice' ? 'Japan' : 'India', accurate: true };
+      } } };
+    });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    const profile = '#profile-name > [data-x-account-flag="true"]';
+    const post = '#post-name > [data-x-account-flag="true"]';
+    await page.waitForFunction(([a, b]) =>
+      document.querySelector(a) && document.querySelector(b), [profile, post]);
+    assert.equal(await page.locator(profile).textContent(), '🇮🇳 IND');
+    assert.equal(await page.locator(post).textContent(), '🇮🇳 IND');
+    for (const row of ['#profile-name', '#post-name']) {
+      assert.equal(await page.locator(row).evaluate(element => {
+        const badge = element.querySelector(':scope > [data-x-account-flag]');
+        const name = badge?.nextElementSibling;
+        if (!name) return false;
+        const a = badge.getBoundingClientRect();
+        const b = name.getBoundingClientRect();
+        return Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top);
+      }), true, row + ' badge and display name must overlap vertically');
+    }
+    for (const selector of ['#avatar-only', '#bio', '#follow', '#profile-handle', '#post-handle']) {
+      assert.equal(await page.locator(`${selector} [data-x-account-flag]`).count(), 0);
+    }
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['_voltcrash']);
+
+    // React may reuse a public-name row for a different account.
+    await page.evaluate(() => {
+      document.querySelector('#profile-name a').href = '/Alice';
+      document.querySelector('#profile-name a div').textContent = 'Alice';
+      document.querySelector('#profile-handle a').href = '/Alice';
+      document.querySelector('#profile-handle a span').textContent = '@Alice';
+    });
+    await page.waitForFunction(selector => {
+      const chip = document.querySelector(selector);
+      return chip?.dataset.xAccountHandle === 'alice' && chip.textContent === '🇯🇵 JPN';
+    }, profile);
+    assert.equal(await page.locator(post).textContent(), '🇮🇳 IND');
+    assert.deepEqual(await page.locator('#profile-name [data-x-account-flag]')
+      .allTextContents(), ['🇯🇵 JPN']);
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['_voltcrash', 'alice']);
+  });
+
+test('Firefox annotates the plain-text main header of a public X profile',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    // Use a fulfilled X URL to exercise route scoping without remote traffic.
+    await page.route('https://x.com/_voltcrash', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: `
+        <header id="public-profile-main">
+          <div class="min-w-0 flex flex-col items-start">
+            <span id="main-name"><h1 class="text-headline1">⚡️</h1></span>
+            <span><span id="main-handle">@_voltcrash</span></span>
+          </div>
+        </header>
+        <h1 id="login-heading">Log in or sign up for X</h1>
+        <div id="stray-handle"><span>@Alice</span></div>
+      `
+    }));
+    await page.goto('https://x.com/_voltcrash');
+    await page.evaluate(() => {
+      window.lookupHandles = [];
+      window.browser = { runtime: { sendMessage: async ({ username }) => {
+        window.lookupHandles.push(username);
+        return { success: true,
+          country: username === '_voltcrash' ? 'India' : 'Japan', accurate: true };
+      } } };
+    });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    const badge = '#main-name > [data-x-account-flag="true"]';
+    await page.locator(badge).waitFor();
+    assert.equal(await page.locator(badge).textContent(), '🇮🇳 IND');
+    assert.equal(await page.locator('#main-name').evaluate(row => {
+      const chip = row.querySelector(':scope > [data-x-account-flag]');
+      const name = row.querySelector('h1');
+      const a = chip.getBoundingClientRect();
+      const b = name.getBoundingClientRect();
+      return Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top);
+    }), true, 'main profile header chip must appear on the name line');
+    assert.equal(await page.locator('#main-name > [data-x-account-flag]').count(), 1);
+    assert.equal(await page.locator('#login-heading [data-x-account-flag]').count(), 0);
+    assert.equal(await page.locator('#stray-handle [data-x-account-flag]').count(), 0);
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['_voltcrash']);
+
+    // A display name may begin with @ without being the account handle.
+    await page.evaluate(() => {
+      document.querySelector('#main-name h1').textContent = '@Awesome Studio';
+    });
+    await page.waitForTimeout(200);
+    assert.deepEqual(await page.locator('#main-name > [data-x-account-flag]')
+      .allTextContents(), ['🇮🇳 IND']);
+
+    // An image-only keycap name is still a valid main-profile display name.
+    await page.evaluate(() => {
+      document.querySelector('#main-name h1').innerHTML = '<img alt="1️⃣">';
+    });
+    await page.waitForTimeout(200);
+    assert.deepEqual(await page.locator('#main-name > [data-x-account-flag]')
+      .allTextContents(), ['🇮🇳 IND']);
+
+    // A client-side navigation must not leave the old account's badge behind.
+    await page.evaluate(() => {
+      history.pushState({}, '', '/Alice');
+      document.querySelector('#main-handle').textContent = '@Alice';
+    });
+    await page.waitForFunction(selector => {
+      const chip = document.querySelector(selector);
+      return chip?.dataset.xAccountHandle === 'alice' && chip.textContent === '🇯🇵 JPN';
+    }, badge);
+    assert.deepEqual(await page.locator('#main-name > [data-x-account-flag]')
+      .allTextContents(), ['🇯🇵 JPN']);
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles),
+      ['_voltcrash', 'alice']);
+  });
+
+test('Firefox prefers the account name over avatar and unrelated image links',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserCell" id="alice">
+        <div id="avatar-row"><a href="/Alice" role="link"><img alt="Profile photo"></a></div>
+        <div id="alice-name"><a href="/Alice" role="link">Alice</a></div>
+        <a href="/Alice" role="link" tabindex="-1">@Alice</a>
+      </section>
+      <section data-testid="UserCell" id="avatar-only">
+        <div data-testid="UserAvatar-Container-Bob">
+          <a href="/Bob" role="link"><img alt="Profile photo"></a>
+        </div>
+        <a href="/Bob" role="link" tabindex="-1">@Bob</a>
+      </section>
+      <section data-testid="UserName" id="profile">
+        <div id="misc-row"><div dir="ltr"><img alt="Unrelated icon"></div></div>
+        <div id="profile-name"><div dir="ltr"><img alt="⚡️"></div></div>
+        <div tabindex="-1"><div dir="ltr">@_voltcrash</div></div>
+      </section>
+      <section data-testid="UserName" id="mixed">
+        <div id="mixed-avatar"><a href="/Eve" role="link">
+          <img src="https://pbs.twimg.com/profile_images/123/avatar.jpg" alt="⚡️">
+        </a></div>
+        <div id="mixed-name"><div dir="ltr">Eve</div></div>
+        <a href="/Eve" role="link" tabindex="-1">@Eve</a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.lookupHandles = [];
+      window.browser = { runtime: { sendMessage: async ({ username }) => {
+        window.lookupHandles.push(username);
+        return { success: true, country: 'India', accurate: true };
+      } } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.waitForFunction(() =>
+      document.querySelector('#alice-name > [data-x-account-flag]') &&
+      document.querySelector('#profile-name > [data-x-account-flag]') &&
+      document.querySelector('#mixed-name > [data-x-account-flag]'));
+    assert.equal(await page.locator('#avatar-row [data-x-account-flag]').count(), 0);
+    assert.equal(await page.locator('#avatar-only [data-x-account-flag]').count(), 0);
+    assert.equal(await page.locator('#misc-row [data-x-account-flag]').count(), 0);
+    assert.equal(await page.locator('#mixed-avatar [data-x-account-flag]').count(), 0);
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles.sort()),
+      ['_voltcrash', 'alice', 'eve']);
+  });
+
+test('Firefox reconciles reused name rows and observes emoji alt changes',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="User-Name">
+        <div id="name-row"><a id="name" href="/Alice" role="link">
+          <div dir="ltr"><img id="emoji" alt="⚡️"></div>
+        </a></div>
+        <a id="handle" href="/Alice" role="link" tabindex="-1">
+          <div dir="ltr">@Alice</div>
+        </a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.lookupHandles = [];
+      window.browser = { runtime: { sendMessage: async ({ username }) => {
+        window.lookupHandles.push(username);
+        return { success: true,
+          country: username === 'alice' ? 'India' : 'Japan', accurate: true };
+      } } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    const selector = '#name-row > [data-x-account-flag="true"]';
+    await page.locator(selector).waitFor();
+    assert.equal(await page.locator(selector).textContent(), '🇮🇳 IND');
+
+    // React may reuse the element while the new account has no display name.
+    await page.evaluate(() => {
+      document.querySelector('#name').setAttribute('href', '/Bob');
+      document.querySelector('#handle').setAttribute('href', '/Bob');
+      document.querySelector('#handle div').textContent = '@Bob';
+      document.querySelector('#emoji').alt = '';
+    });
+    await page.waitForFunction(() =>
+      !document.querySelector('#name-row > [data-x-account-flag]'));
+    assert.equal(await page.locator(selector).count(), 0);
+
+    // An alt-only update must be sufficient to discover the new display name.
+    await page.evaluate(() => { document.querySelector('#emoji').alt = '⚡️'; });
+    await page.waitForFunction(() =>
+      document.querySelector('#name-row > [data-x-account-flag]')?.textContent === '🇯🇵 JPN');
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['alice', 'bob']);
+
+    await page.evaluate(() => { document.querySelector('#emoji').alt = ''; });
+    await page.waitForFunction(() =>
+      !document.querySelector('#name-row > [data-x-account-flag]'));
+    assert.equal(await page.locator(selector).count(), 0);
+  });
+
+test('Firefox keeps UserCell header badges out of same-account biography links',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserCell">
+        <div id="name-row"><a href="/Alice" role="link">Alice</a></div>
+        <div><a href="/Alice" role="link" tabindex="-1">@Alice</a></div>
+        <div dir="auto" id="bio"><a href="/Alice" role="link">
+          Read Alice's posts</a></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'India', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.locator('#name-row > [data-x-account-flag]').waitFor();
+    assert.equal(await page.locator('#name-row > [data-x-account-flag]').textContent(),
+      '🇮🇳 IND');
+    assert.equal(await page.locator('#bio [data-x-account-flag]').count(), 0);
+    await page.evaluate(() => window.dispatchEvent(new Event('scroll')));
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('#name-row > [data-x-account-flag]').count(), 1);
+    assert.equal(await page.locator('#bio [data-x-account-flag]').count(), 0);
+  });
+
+test('Firefox keeps quoted-post name badges ahead of affiliation images',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="User-Name" id="text-name">
+        <div id="true-name"><div dir="ltr">Alice</div></div>
+        <div id="affiliation"><div dir="ltr">
+          <img alt="Affiliated with ExampleCorp"></div></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+      <section data-testid="User-Name" id="image-name">
+        <div id="unrelated"><div dir="ltr"><img alt="Unrelated icon"></div></div>
+        <div id="emoji-name"><div dir="ltr"><img alt="⚡️"></div></div>
+        <div id="second-affiliation"><div dir="ltr">
+          <img alt="Affiliated with ExampleCorp"></div></div>
+        <div id="text-affiliation"><div dir="ltr">ExampleCorp affiliated</div></div>
+        <div tabindex="-1"><div dir="ltr">@_voltcrash</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async ({ username }) => ({
+        success: true, country: username === 'alice' ? 'Japan' : 'India',
+        accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.waitForFunction(() =>
+      document.querySelector('#true-name > [data-x-account-flag]') &&
+      document.querySelector('#emoji-name > [data-x-account-flag]'));
+    assert.equal(await page.locator('#true-name > [data-x-account-flag]').textContent(),
+      '🇯🇵 JPN');
+    assert.equal(await page.locator('#emoji-name > [data-x-account-flag]').textContent(),
+      '🇮🇳 IND');
+    for (const selector of ['#affiliation', '#unrelated', '#second-affiliation', '#text-affiliation']) {
+      assert.equal(await page.locator(selector + ' [data-x-account-flag]').count(), 0);
+    }
+  });
+
+test('Firefox ignores emoji-bearing avatar and affiliation decorations before names',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserName">
+        <div id="avatar-row" class="user-avatar"><div dir="ltr">
+          <img alt="⚡️"></div></div>
+        <div id="real-name"><div dir="ltr">Alice</div></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+      <section data-testid="User-Name">
+        <div id="quote-row"><div dir="ltr">
+          <img alt="✨ affiliation"></div></div>
+        <div id="tweet-name"><div dir="ltr">Bob</div></div>
+        <div tabindex="-1"><div dir="ltr">@Bob</div></div>
+      </section>
+      <section data-testid="User-Name">
+        <div id="affiliation-icon" data-testid="AffiliationBadge"><div dir="ltr">
+          <img alt="✨"></div></div>
+        <div id="emoji-real-name"><div dir="ltr"><img alt="⚡️"></div></div>
+        <div tabindex="-1"><div dir="ltr">@Carol</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    const expected = ['#real-name', '#tweet-name', '#emoji-real-name'];
+    await page.waitForFunction(rows => rows.every(row =>
+      document.querySelector(`${row} > [data-x-account-flag="true"]`)), expected);
+    for (const id of expected) {
+      assert.deepEqual(await page.locator(`${id} > [data-x-account-flag]`)
+        .allTextContents(), ['🇯🇵 JPN']);
+    }
+    for (const id of ['#avatar-row', '#quote-row', '#affiliation-icon']) {
+      assert.equal(await page.locator(`${id} [data-x-account-flag]`).count(), 0);
+    }
+  });
+
+test('Firefox preserves legitimate account names containing affiliation-related words',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserName">
+        <div id="plain-name"><div dir="ltr">Affiliate Network</div></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+      <section data-testid="UserCell">
+        <div id="linked-name"><a href="/Bob" role="link">Affiliated Artists</a></div>
+        <a href="/Bob" role="link" tabindex="-1">@Bob</a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    for (const row of ['#plain-name', '#linked-name']) {
+      await page.locator(`${row} > [data-x-account-flag]`).waitFor();
+      assert.deepEqual(await page.locator(`${row} > [data-x-account-flag]`)
+        .allTextContents(), ['🇯🇵 JPN']);
+    }
+  });
+
+test('Firefox does not reveal hidden account-name rows to insert badges',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <style>.hidden, .collapsed { display: none; }</style>
+      <section data-testid="User-Name">
+        <div id="row" class="hidden">
+          <a href="/Alice" role="link">Alice</a>
+        </div>
+        <a href="/Alice" role="link" tabindex="-1">@Alice</a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.waitForTimeout(350);
+    assert.equal(await page.locator('#row').evaluate(node =>
+      getComputedStyle(node).display), 'none');
+    assert.equal(await page.locator('#row [data-x-account-flag]').count(), 0);
+
+    await page.evaluate(() => document.querySelector('#row').classList.remove('hidden'));
+    await page.locator('#row > [data-x-account-flag]').waitFor();
+    assert.equal(await page.locator('#row').evaluate(node =>
+      getComputedStyle(node).display), 'flex');
+
+    await page.evaluate(() => document.querySelector('#row').classList.add('collapsed'));
+    await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
+    assert.equal(await page.locator('#row').evaluate(node =>
+      getComputedStyle(node).display), 'none');
+  });
+
+test('Firefox detects unlinked public profile headers on profile subroutes',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.route('https://x.com/Alice/**', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: `
+        <div>
+          <span id="profile-name"><h1>Alice</h1></span>
+          <span><span>@Alice</span></span>
+        </div>
+      `
+    }));
+    for (const tab of ['media', 'with_replies', 'likes', 'highlights', 'articles']) {
+      await page.goto('https://x.com/Alice/' + tab);
+      await page.evaluate(() => {
+        window.browser = { runtime: { sendMessage: async () => ({
+          success: true, country: 'Japan', accurate: true
+        }) } };
+      });
+      await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+      await page.locator('#profile-name > [data-x-account-flag]').waitFor();
+      assert.deepEqual(await page.locator('#profile-name > [data-x-account-flag]')
+        .allTextContents(), ['🇯🇵 JPN'], 'profile tab: ' + tab);
+    }
+  });
+
+test('Firefox distinguishes @-prefixed account names from handle elements',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserName">
+        <div id="plain-name"><div dir="ltr">@Awesome Studio</div></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+      <section data-testid="User-Name">
+        <div id="same-name"><div dir="ltr">@Bob</div></div>
+        <div tabindex="-1"><div dir="ltr">@Bob</div></div>
+      </section>
+      <section data-testid="UserCell">
+        <div id="linked-name"><a href="/Carol" role="link">@Design Studio</a></div>
+        <a href="/Carol" tabindex="-1" role="link">@Carol</a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    for (const row of ['#plain-name', '#same-name', '#linked-name']) {
+      await page.locator(`${row} > [data-x-account-flag]`).waitFor();
+      assert.deepEqual(await page.locator(`${row} > [data-x-account-flag]`)
+        .allTextContents(), ['🇯🇵 JPN']);
+    }
+    assert.equal(await page.locator('[tabindex="-1"] [data-x-account-flag]').count(), 0);
+  });
+
+test('Firefox restores original header row layout when chips disappear',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="User-Name">
+        <div id="row" style="flex-direction: column; align-items: flex-end">
+          <a id="name" href="/Alice" role="link"><div dir="ltr">Alice</div></a>
+        </div>
+        <a href="/Alice" role="link" tabindex="-1">@Alice</a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    const badge = '#row > [data-x-account-flag]';
+    await page.locator(badge).waitFor();
+    assert.deepEqual(await page.locator('#row').evaluate(row => ({
+      display: getComputedStyle(row).display,
+      flex: getComputedStyle(row).flexDirection,
+      align: getComputedStyle(row).alignItems,
+      inlineFlex: row.style.flexDirection, inlineAlign: row.style.alignItems
+    })), { display: 'flex', flex: 'row', align: 'center',
+      inlineFlex: 'column', inlineAlign: 'flex-end' });
+
+    await page.evaluate(() => document.querySelector('#name').removeAttribute('href'));
+    await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
+    assert.deepEqual(await page.locator('#row').evaluate(row => ({
+      display: getComputedStyle(row).display, flex: row.style.flexDirection, align: row.style.alignItems
+    })), { display: 'block', flex: 'column', align: 'flex-end' });
+
+    await page.evaluate(() => document.querySelector('#name').href = '/Alice');
+    await page.locator(badge).waitFor();
+    assert.deepEqual(await page.locator('#row').evaluate(row => ({
+      display: getComputedStyle(row).display,
+      flex: getComputedStyle(row).flexDirection,
+      align: getComputedStyle(row).alignItems,
+      inlineFlex: row.style.flexDirection, inlineAlign: row.style.alignItems
+    })), { display: 'flex', flex: 'row', align: 'center',
+      inlineFlex: 'column', inlineAlign: 'flex-end' });
+    await page.evaluate(() => document.querySelector('#name').removeAttribute('href'));
+    await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
+    assert.deepEqual(await page.locator('#row').evaluate(row => ({
+      display: getComputedStyle(row).display, flex: row.style.flexDirection, align: row.style.alignItems
+    })), { display: 'block', flex: 'column', align: 'flex-end' });
+
+    // X removes entire virtualized timeline rows, sometimes leaving the badge
+    // inside the detached node. Drop its retained style-tracking entry too.
+    await page.evaluate(() => document.querySelector('#name').href = '/Alice');
+    await page.locator(badge).waitFor();
+    await page.evaluate(() => {
+      window.detachedRow = document.querySelector('#row');
+      window.detachedRow.parentElement.remove();
+    });
+    await page.waitForFunction(() =>
+      window.detachedRow.style.flexDirection === 'column' &&
+      window.detachedRow.style.alignItems === 'flex-end');
+    assert.equal(await page.locator('#row').count(), 0);
+  });
+
+test('Firefox prefers a linked textual name over an adjacent unmarked emoji image',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserName">
+        <div id="decoration"><div dir="ltr"><img alt="✨"></div></div>
+        <div id="actual-name"><a href="/Alice"><div dir="ltr">Alice</div></a></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.locator('#actual-name > [data-x-account-flag]').waitFor();
+    assert.equal(await page.locator('#decoration [data-x-account-flag]').count(), 0);
+    assert.deepEqual(await page.locator('#actual-name > [data-x-account-flag]')
+      .allTextContents(), ['🇯🇵 JPN']);
+  });
+
+test('Firefox keeps emoji-only name chips off adjacent metadata',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserName">
+        <div id="emoji-name"><a href="/Alice"><div dir="ltr">
+          <img alt="⚡️"></div></a></div>
+        <div id="metadata"><div dir="ltr">Trusted organization</div></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+      <section data-testid="UserName" id="ambiguous">
+        <div id="unlinked-image"><div dir="ltr"><img alt="⚡️"></div></div>
+        <div id="unlinked-text"><div dir="ltr">Trusted organization</div></div>
+        <div tabindex="-1"><div dir="ltr">@Bob</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.lookupHandles = [];
+      window.browser = { runtime: { sendMessage: async ({ username }) => {
+        window.lookupHandles.push(username);
+        return { success: true, country: 'Japan', accurate: true };
+      } } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.locator('#emoji-name > [data-x-account-flag]').waitFor();
+    assert.deepEqual(await page.locator('#emoji-name > [data-x-account-flag]')
+      .allTextContents(), ['🇯🇵 JPN']);
+    await page.waitForTimeout(200);
+    for (const row of ['#metadata', '#unlinked-image', '#unlinked-text']) {
+      assert.equal(await page.locator(`${row} [data-x-account-flag]`).count(), 0, row);
+    }
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['alice']);
+  });
+
+test('Firefox annotates quoted-post native name links without explicit roles',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="User-Name">
+        <div id="name-row"><a href="/Alice"><div dir="ltr">Alice</div></a></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'India', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.locator('#name-row > [data-x-account-flag]').waitFor();
+    assert.deepEqual(await page.locator('#name-row > [data-x-account-flag]')
+      .allTextContents(), ['🇮🇳 IND']);
+    assert.equal(await page.locator('#name-row a [data-x-account-flag]').count(), 0);
+  });
+
+test('Firefox rescans rows revealed solely by an inline display change',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="User-Name">
+        <div id="row" style="display: none">
+          <a href="/Alice" role="link">Alice</a>
+        </div>
+        <a href="/Alice" tabindex="-1">@Alice</a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'India', accurate: true
+      }) } };
+    });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.waitForTimeout(160);
+    assert.equal(await page.locator('#row [data-x-account-flag]').count(), 0);
+    await page.evaluate(() => { document.querySelector('#row').style.display = 'block'; });
+    await page.locator('#row > [data-x-account-flag]').waitFor();
+    assert.deepEqual(await page.locator('#row > [data-x-account-flag]')
+      .allTextContents(), ['🇮🇳 IND']);
+    await page.waitForTimeout(250);
+    assert.equal(await page.locator('#row > [data-x-account-flag]').count(), 1);
+  });
+
+test('Firefox keeps new site inline layout values after badge removal',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="User-Name">
+        <div id="row" style="flex-direction:column;align-items:flex-start">
+          <a id="name" href="/Alice" role="link">Alice</a>
+        </div>
+        <a href="/Alice" tabindex="-1">@Alice</a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.locator('#row > [data-x-account-flag]').waitFor();
+    await page.evaluate(() => {
+      const row = document.querySelector('#row');
+      row.style.flexDirection = 'row-reverse';
+      row.style.alignItems = 'flex-end';
+    });
+    assert.deepEqual(await page.locator('#row').evaluate(row => [
+      getComputedStyle(row).flexDirection, getComputedStyle(row).alignItems
+    ]), ['row', 'center']);
+    await page.evaluate(() => document.querySelector('#name').removeAttribute('href'));
+    await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
+    assert.deepEqual(await page.locator('#row').evaluate(row => [
+      row.style.flexDirection, row.style.alignItems,
+      getComputedStyle(row).flexDirection, getComputedStyle(row).alignItems
+    ]), ['row-reverse', 'flex-end', 'row-reverse', 'flex-end']);
+  });

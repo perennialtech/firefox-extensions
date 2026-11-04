@@ -14,6 +14,8 @@
   const urgent = new Set();
   const inFlight = new Set();
   const queue = [];
+  // Track decorated rows so detached or reused rows lose our CSS marker.
+  const headerRows = new Set();
   const regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
   // ISO 3166-1 alpha-2 -> alpha-3 (iso-codes project). Limit country
   // lookups to assigned ISO codes: CLDR also names non-country regions.
@@ -186,6 +188,56 @@
       .map(node => node.textContent).join('') : link.textContent).trim();
   }
 
+  function hasEmojiNameImage(node) {
+    // X replaces emoji in display names with img elements. An arbitrary image
+    // in an avatar or affiliation is not evidence of a display name.
+    return [...(node.querySelectorAll?.('img[alt]') || [])]
+      .some(img => /(?:[\p{Extended_Pictographic}\p{Regional_Indicator}]|[0-9#*]\uFE0F?\u20E3)/u
+        .test(img.getAttribute('alt') || '') &&
+        !/\p{L}/u.test(img.getAttribute('alt') || ''));
+  }
+
+  function hasDisplayName(node) {
+    const text = node.textContent.trim();
+    return Boolean(text) || hasEmojiNameImage(node);
+  }
+
+  function isNameCandidate(node) {
+    // These decorations can themselves contain an emoji; that alone does not
+    // make them the account display name. Inspect ancestors as well as the
+    // image, since X often wraps avatar and affiliation artwork in div[dir=ltr].
+    if (node.closest?.('[data-testid*="Avatar" i], [data-testid*="Affiliation" i], ' +
+      '[class*="avatar" i], [class*="affiliation" i], [id*="avatar" i], [id*="affiliation" i]')) {
+      return false;
+    }
+    if (node.querySelector?.('img[src*="/profile_images/"]')) return false;
+    return hasDisplayName(node);
+  }
+
+  function styleHeaderRow(row) {
+    headerRows.add(row);
+    // CSS controls the temporary layout without overwriting X's inline styles.
+    row.setAttribute?.('data-x-account-flag-header', 'true');
+  }
+
+  function restoreHeaderRow(row) {
+    if (!headerRows.has(row)) return;
+    row.removeAttribute?.('data-x-account-flag-header');
+    headerRows.delete(row);
+  }
+
+  function restoreUnusedHeaderRows() {
+    for (const row of headerRows) {
+      // X virtualizes timeline items by detaching entire rows. Their chips
+      // remain children of the detached node, but must not keep the row alive
+      // through this Map after the next mutation-driven scan.
+      if (row.isConnected === false ||
+        ![...(row.children || [])].some(child => child.dataset?.xAccountFlag === 'true')) {
+        restoreHeaderRow(row);
+      }
+    }
+  }
+
   function findHandles(root = document) {
     const containers = [];
     if (root.matches?.(USER_SELECTOR)) containers.push(root);
@@ -197,44 +249,71 @@
       // UserCell also contains bio links. Only decorate the account header,
       // identified by a display-name link AND its matching @handle link.
       const links = [...container.querySelectorAll('a[href]')];
-      const handles = new Set();
-      for (const link of links) {
+      const handles = new Map();
+      for (const [index, link] of links.entries()) {
         if (link.getAttribute('tabindex') !== '-1') continue;
         const value = link.textContent.trim();
         const path = link.getAttribute('href');
         if (!path || !/^@[a-zA-Z0-9_]{1,15}$/.test(value)) continue;
         if (path.toLowerCase() === '/' + value.slice(1).toLowerCase()) {
-          handles.add(value.slice(1).toLowerCase());
+          const username = value.slice(1).toLowerCase();
+          if (!handles.has(username)) handles.set(username, index);
         }
       }
       let foundHeader = false;
-      for (const link of links) {
+      // Prefer the link nearest the @handle, not an earlier avatar link.
+      for (let i = links.length - 1; i >= 0; i--) {
+        const link = links[i];
         if (link.getAttribute('tabindex') === '-1') continue;
-        if (link.getAttribute('role') !== 'link') continue;
+        if (link.closest?.('[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]')) continue;
         const path = link.getAttribute('href');
         const match = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(path || '');
         if (!match || !handles.has(match[1].toLowerCase())) continue;
+        // Bio links appear after the account's handle in a UserCell.
+        if (i >= handles.get(match[1].toLowerCase())) continue;
         // The display-name link is distinct from the handle and avatar links.
-        if (link.textContent.trim().startsWith('@') || !link.textContent.trim()) continue;
+        if (!isNameCandidate(link)) continue;
         if (seen.has(link)) continue;
         seen.add(link);
         found.push({ link, username: match[1].toLowerCase(), placement: 'header' });
         foundHeader = true;
         break;
       }
-      // Quoted posts have a plain-text name and a tabindex=-1 handle wrapper,
-      // not the profile links used in normal tweet headers and UserCells.
+      // Quoted posts and profile headers can have non-link display names and
+      // a tabindex=-1 handle wrapper, unlike regular tweet headers.
       if (!foundHeader && type !== 'UserCell' && type !== 'UserDescription') {
         const handle = [...container.querySelectorAll('[tabindex="-1"]')]
           .map(node => /^@([a-zA-Z0-9_]{1,15})$/.exec(node.textContent.trim()))
           .find(Boolean);
         if (handle) {
-          const name = [...container.querySelectorAll('div[dir="ltr"]')]
-            .find(node => node.textContent.trim() &&
-              node.textContent.trim() !== '@' + handle[1]);
-          if (name && !seen.has(name)) {
-            seen.add(name);
-            found.push({ link: name, username: handle[1].toLowerCase(), placement: 'header' });
+          const nameNodes = [...container.querySelectorAll('div[dir="ltr"]')];
+          const handleIndex = nameNodes.findIndex(node =>
+            node.closest?.('[tabindex="-1"]'));
+          const candidates = handleIndex < 0 ? nameNodes : nameNodes.slice(0, handleIndex);
+          // The display name comes before affiliation and other metadata.
+          // If React removes an account link's href while recycling a row,
+          // descendants inside that link must not become a second name match.
+          const username = handle[1].toLowerCase();
+          const names = candidates.flatMap((node, index) => {
+            if (node.closest?.('[tabindex="-1"]')) return [];
+            const anchor = node.closest?.('a');
+            if (anchor && (anchor.getAttribute('href') || '').toLowerCase()
+              .replace(/\/$/, '') !== '/' + username) return [];
+            const link = anchor || node;
+            return isNameCandidate(link) ? [{ link, node, index }] : [];
+          });
+          let name = names[0];
+          // An emoji-only name and an unrelated emoji followed by a text name
+          // look identical without an account link. Prefer the linked candidate
+          // when there is exactly one; never guess between unlinked siblings.
+          if (name && !name.node.textContent.trim() &&
+            names[1]?.index === name.index + 1 && names[1].node.textContent.trim()) {
+            const linked = names.filter(candidate => candidate.link !== candidate.node);
+            name = linked.length === 1 ? linked[0] : null;
+          }
+          if (name && !seen.has(name.link)) {
+            seen.add(name.link);
+            found.push({ link: name.link, username, placement: 'header' });
           }
         }
       }
@@ -252,6 +331,49 @@
           found.push({ link, username: match[1].toLowerCase(),
             placement: type === 'UserDescription' ? 'profile-mention' : 'mention' });
         }
+      }
+    }
+    // Public, logged-out X pages render name and handle as adjacent links to
+    // the same profile, without the data-testid containers used above. Match
+    // only within their small shared row: a handle alone (e.g. a biography
+    // mention) or a profile avatar must never be mistaken for a display name.
+    for (const handleLink of root.querySelectorAll('a[href]')) {
+      if (handleLink.closest(USER_SELECTOR)) continue;
+      const path = handleLink.getAttribute('href') || '';
+      const match = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(path);
+      if (!match) continue;
+      const username = match[1].toLowerCase();
+      if (mentionText(handleLink).toLowerCase() !== '@' + username) continue;
+      const row = handleLink.parentElement?.parentElement;
+      if (!row || row === document.body) continue;
+      const links = [...row.querySelectorAll('a[href]')];
+      const index = links.indexOf(handleLink);
+      const name = links.slice(0, index).reverse().find(link =>
+        link.getAttribute('href')?.toLowerCase().replace(/\/$/, '') === '/' + username &&
+        !link.querySelector('.x-avatar, [data-testid="Tweet-User-Avatar"], img[src*="/profile_images/"]') &&
+        hasDisplayName(link));
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      found.push({ link: name, username, placement: 'header' });
+    }
+    // The main header of a public profile is different again: its display
+    // name is an h1 and the matching @handle is plain text, with no profile
+    // links. Scope this to the visited profile route so unrelated headings
+    // and account references elsewhere on the page cannot acquire chips.
+    const profile = /^\/([a-zA-Z0-9_]{1,15})(?:\/(?:with_replies|media|likes|highlights|articles))?\/?$/
+      .exec(location.pathname);
+    if (profile) {
+      const username = profile[1].toLowerCase();
+      for (const name of root.querySelectorAll('h1')) {
+        if (name.closest(USER_SELECTOR) || seen.has(name) || !hasDisplayName(name)) continue;
+        const header = name.parentElement?.parentElement;
+        if (!header) continue;
+        const hasHandle = [...header.querySelectorAll('span')].some(node =>
+          node.childElementCount === 0 &&
+          node.textContent.trim().toLowerCase() === '@' + username);
+        if (!hasHandle) continue;
+        seen.add(name);
+        found.push({ link: name, username, placement: 'header' });
       }
     }
     return found;
@@ -280,6 +402,7 @@
     // Pending, empty and failed lookups do not create placeholder elements.
     if (!display) {
       badge?.remove();
+      restoreUnusedHeaderRows();
       return;
     }
     if (!badge) {
@@ -308,9 +431,17 @@
       }
     } else {
       if (placement === 'header') {
+        // Do not overwrite X's hidden state with our inline flex display.
+        // Hidden rows can still be mounted and fetched before they are shown.
+        if (row.hidden || row.closest?.('[hidden]') ||
+          row.classList?.contains('hidden') ||
+          window.getComputedStyle?.(row).display === 'none') {
+          badge?.remove();
+          restoreUnusedHeaderRows();
+          return;
+        }
         // X's inner display-name wrapper defaults to a flex column.
-        row.style.flexDirection = 'row';
-        row.style.alignItems = 'center';
+        styleHeaderRow(row);
       }
       if (badge.parentElement !== row || badge.nextElementSibling !== link) {
         row.insertBefore(badge, link);
@@ -411,11 +542,21 @@
 
   function scan() {
     const items = findHandles();
-    const profileLinks = new Set(items.filter(item => item.placement === 'profile-mention')
-      .map(item => item.link));
-    for (const badge of document.querySelectorAll('a > [data-x-account-flag="true"]')) {
-      if (!profileLinks.has(badge.parentElement)) badge.remove();
+    // React can reuse an existing row while its name/handle are being changed.
+    // Reconcile every chip with currently matched names, not just bio links.
+    const validBadges = new Map();
+    for (const item of items) {
+      const row = item.placement === 'profile-mention' ? item.link : item.link.parentElement;
+      if (!row) continue;
+      if (!validBadges.has(row)) validBadges.set(row, new Set());
+      validBadges.get(row).add(item.username);
     }
+    for (const badge of document.querySelectorAll('[data-x-account-flag="true"]')) {
+      if (!validBadges.get(badge.parentElement)?.has(badge.dataset.xAccountHandle)) {
+        badge.remove();
+      }
+    }
+    restoreUnusedHeaderRows();
     const mountedNames = new Set(items.map(item => item.username));
     // React unmounts virtualized rows; discard queued work for removed rows.
     for (let i = queue.length - 1; i >= 0; i--) {
@@ -459,8 +600,15 @@
   document.addEventListener('focusin', prioritize, true);
   window.addEventListener('scroll', scheduleScan, true);
   window.addEventListener('resize', scheduleScan);
-  new MutationObserver(scheduleScan).observe(document.documentElement, {
-    childList: true, subtree: true, attributes: true, attributeFilter: ['href'],
+  new MutationObserver(mutations => {
+    // Our own badge styling runs on every paint. Observe site-owned inline
+    // visibility changes, but do not rescan in response to our style writes.
+    if (mutations.some(mutation => mutation.type !== 'attributes' ||
+      mutation.attributeName !== 'style' ||
+      mutation.target.dataset?.xAccountFlag !== 'true')) scheduleScan();
+  }).observe(document.documentElement, {
+    childList: true, subtree: true, attributes: true,
+    attributeFilter: ['href', 'alt', 'class', 'hidden', 'style'],
     characterData: true
   });
   scan();
