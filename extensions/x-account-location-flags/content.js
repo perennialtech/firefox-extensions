@@ -723,8 +723,10 @@
     for (const [key, expiry] of blockChecks) {
       if (expiry <= now) blockChecks.delete(key);
     }
-    for (const [userId, entry] of idEntries) {
-      if (entry.expires <= now) idEntries.delete(userId);
+    for (const locations of [entries, idEntries]) {
+      for (const [key, entry] of locations) {
+        if (entry.expires <= now) locations.delete(key);
+      }
     }
     const items = findHandles();
     // React can reuse an existing row while its name/handle are being changed.
