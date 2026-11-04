@@ -485,6 +485,28 @@ test('a fresh ID check detects a South Asian account despite an older neutral ch
   assert.equal(f.badge(1).textContent, '🇮🇳 IND');
 });
 
+test('auto-block checks an ID when the handle lookup fails or is still pending', async () => {
+  let finish;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const f = contentFixture({
+    lookup: ({ username }) => username === 'alice' ? pending : { success: false },
+    autoBlock: {
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' },
+        bob: { id_str: '3', screen_name: 'Bob' }
+      },
+      idLookup: () => ({ success: true, country: 'India' })
+    }
+  });
+  await waitFor(() => f.blocks.length === 2);
+  finish({ success: true, country: 'Japan' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.blocks.sort(), ['2', '3']);
+  assert.equal(f.badge(0).textContent, '🇮🇳 IND');
+  assert.equal(f.badge(1).textContent, '🇮🇳 IND');
+});
+
 test('auto-block uses the rendered account when X retains a former handle owner', async () => {
   const current = { id_str: '3', screen_name: 'Alice' };
   const f = contentFixture({

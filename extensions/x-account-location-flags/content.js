@@ -10,6 +10,7 @@
   const MAX_IN_FLIGHT = 4;
   const MAX_QUEUE = 150;
   const LOOKUP_FAILURE_TTL = 30000;
+  const LOCATION_TTL = 30 * 60 * 1000;
   const entries = new Map();
   const queued = new Set();
   const urgent = new Set();
@@ -484,8 +485,8 @@
     setTimeout(scheduleScan, LOOKUP_FAILURE_TTL);
   }
 
-  async function checkAutoBlock({ link, username, placement }, entry) {
-    if (placement !== 'header' || !autoBlockSettings?.autoBlockSouthAsia || !entry?.success ||
+  async function checkAutoBlock({ link, username, placement }) {
+    if (placement !== 'header' || !autoBlockSettings?.autoBlockSouthAsia ||
         !visibleForBlock(link)) return;
     try {
       const account = renderedAccount(link, username);
@@ -497,7 +498,7 @@
       const users = getXUsersModule();
       const state = store.getState();
       if (users?.selectViewerUser(state)?.id_str !== viewerId || users.select(state, userId)?.blocking) return;
-      blockChecks.set(key, entry.expires);
+      blockChecks.set(key, Date.now() + LOCATION_TTL);
       await navigator.locks.request('x-account-location-flags:' + key, async () => {
         if (!canBlockNow(store, users, viewerId, userId, username)) {
           blockChecks.delete(key);
@@ -546,7 +547,7 @@
       child.dataset?.xAccountFlag === 'true');
     let badge = existing.find(child => child.dataset.xAccountHandle === username);
     for (const old of existing) if (old !== badge) old.remove();
-    void checkAutoBlock({ link, username, placement }, entry);
+    void checkAutoBlock({ link, username, placement });
     const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
     const display = locationLabel(location);
     // Pending, empty and failed lookups do not create placeholder elements.
@@ -667,13 +668,14 @@
   }
 
   function storeLocation(username, result) {
-    entries.set(username, { ...result, expires: Date.now() + 30 * 60 * 1000 });
+    entries.set(username, { ...result, expires: Date.now() + LOCATION_TTL });
   }
 
   function refreshLocation(username, priority) {
+    const previous = entries.get(username);
     void browser.runtime.sendMessage({ type: 'lookup', username, priority, refresh: true })
       .then(result => {
-        if (result?.success) {
+        if (result?.success && entries.get(username) === previous) {
           storeLocation(username, result);
           paintUsername(username);
         }
@@ -685,11 +687,14 @@
     while (inFlight.size < MAX_IN_FLIGHT && queue.length) {
       const username = queue.shift();
       queued.delete(username);
-      if (entries.get(username)?.expires > Date.now()) continue;
+      const previous = entries.get(username);
+      if (previous?.expires > Date.now()) continue;
       inFlight.add(username);
       const priority = urgent.delete(username);
       void browser.runtime.sendMessage({ type: 'lookup', username, priority })
         .then(result => {
+          // A concurrent ID lookup can supply the current rendered account.
+          if (entries.get(username) !== previous) return;
           if (result?.success) {
             storeLocation(username, result);
             if (result.refresh) refreshLocation(username, priority);
@@ -700,7 +705,9 @@
             entries.set(username, { country: null, expires: Date.now() + LOOKUP_FAILURE_TTL });
           }
         }).catch(() => {
-          entries.set(username, { country: null, expires: Date.now() + LOOKUP_FAILURE_TTL });
+          if (entries.get(username) === previous) {
+            entries.set(username, { country: null, expires: Date.now() + LOOKUP_FAILURE_TTL });
+          }
         }).finally(() => {
           inFlight.delete(username);
           paintUsername(username);
