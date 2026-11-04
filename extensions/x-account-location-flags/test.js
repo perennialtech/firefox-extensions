@@ -407,7 +407,11 @@ function contentFixture(options = {}) {
       select: (_, id) => Object.values(profiles).find(user => user.id_str === id),
       block: id => id
     };
-    const store = { getState: () => profiles, async dispatch(id) { blocks.push(id); } };
+    const store = { getState: () => profiles, async dispatch(id) {
+      if (options.autoBlock.dispatch) await options.autoBlock.dispatch(id);
+      users.select(profiles, id).blocking = true;
+      blocks.push(id);
+    } };
     function require() { return { users }; }
     require.m = { 1: () => ({ context: 'ACTION_BLOCK', selectViewerUser: null }) };
     window.wrappedJSObject = {
@@ -460,7 +464,25 @@ test('auto-block defaults include uncertain locations and verify the exact X ide
   f.listeners.get('scroll')();
   await waitFor(() => handles.every((_, i) => f.badge(i)));
   assert.deepEqual(f.blocks, ['2']);
-  assert.deepEqual(f.calls.filter(call => call.type === 'lookup-id').map(call => call.userId).sort(), ['2', '3']);
+  assert.deepEqual(f.calls.filter(call => call.type === 'lookup-id').map(call => call.userId).sort(), ['2', '3', '6']);
+});
+
+test('a fresh ID check detects a South Asian account despite an older neutral chip', async () => {
+  const f = contentFixture({
+    locations: { alice: 'Japan', bob: null },
+    autoBlock: {
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' },
+        bob: { id_str: '3', screen_name: 'Bob' }
+      },
+      idLookup: () => ({ success: true, country: 'India' })
+    }
+  });
+  await waitFor(() => f.blocks.length === 2);
+  assert.deepEqual(f.blocks.sort(), ['2', '3']);
+  assert.equal(f.badge(0).textContent, '🇮🇳 IND');
+  assert.equal(f.badge(1).textContent, '🇮🇳 IND');
 });
 
 test('auto-block uses the rendered account when X retains a former handle owner', async () => {
@@ -621,6 +643,44 @@ test('a failed ID lookup retries before the handle entry expires', async () => {
   await waitFor(() => f.blocks.length === 1);
   assert.equal(calls, 3);
   assert.deepEqual(f.blocks, ['2']);
+});
+
+test('a rejected native block retries using a fresh ID lookup', async () => {
+  let now = Date.now();
+  let retry;
+  let writes = 0;
+  let lookups = 0;
+  const f = contentFixture({
+    locations: { alice: 'India' },
+    autoBlock: {
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      clock: { now: () => now },
+      setTimeout(callback, delay) {
+        if (delay > 1000) {
+          retry = { callback, delay };
+          return null;
+        }
+        return setTimeout(callback, delay);
+      },
+      idLookup: () => {
+        lookups++;
+        return { success: true, country: 'India' };
+      },
+      dispatch: () => {
+        if (++writes === 1) throw new Error('X could not block the account');
+      }
+    }
+  });
+  await waitFor(() => retry);
+  assert.deepEqual(f.blocks, []);
+  now += retry.delay;
+  retry.callback();
+  await waitFor(() => f.blocks.length === 1);
+  assert.equal(lookups, 2);
+  assert.equal(writes, 2);
 });
 
 test('excluding uncertain cases requires both accuracy fields from the immutable ID lookup', async () => {

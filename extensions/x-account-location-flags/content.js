@@ -479,9 +479,14 @@
       });
   }
 
+  function retryBlockCheck(key) {
+    blockChecks.set(key, Date.now() + LOOKUP_FAILURE_TTL);
+    setTimeout(scheduleScan, LOOKUP_FAILURE_TTL);
+  }
+
   async function checkAutoBlock({ link, username, placement }, entry) {
-    if (placement !== 'header' || !autoBlockSettings?.autoBlockSouthAsia || !entry?.country ||
-        !isSouthAsianLocation(entry.country) || !visibleForBlock(link)) return;
+    if (placement !== 'header' || !autoBlockSettings?.autoBlockSouthAsia || !entry?.success ||
+        !visibleForBlock(link)) return;
     try {
       const account = renderedAccount(link, username);
       const viewerId = sessionViewerId();
@@ -505,8 +510,7 @@
             blockChecks.set(key, result.retryAt);
             delayRetry(result.retryAt);
           } else {
-            blockChecks.set(key, Date.now() + LOOKUP_FAILURE_TTL);
-            setTimeout(scheduleScan, LOOKUP_FAILURE_TTL);
+            retryBlockCheck(key);
           }
           return;
         }
@@ -514,7 +518,17 @@
           blockChecks.delete(key);
           return;
         }
-        if (qualifiesForBlock(result)) await store.dispatch(users.block(userId));
+        storeLocation(username, result);
+        paintUsername(username);
+        if (qualifiesForBlock(result)) {
+          try {
+            await store.dispatch(users.block(userId));
+            if (users.select(store.getState(), userId)?.blocking !== true) retryBlockCheck(key);
+          } catch (error) {
+            retryBlockCheck(key);
+            throw error;
+          }
+        }
       });
     } catch (_) {
       console.warn('[X Account Location Flags] Could not automatically block @' + username);
@@ -532,6 +546,7 @@
       child.dataset?.xAccountFlag === 'true');
     let badge = existing.find(child => child.dataset.xAccountHandle === username);
     for (const old of existing) if (old !== badge) old.remove();
+    void checkAutoBlock({ link, username, placement }, entry);
     const location = typeof entry?.country === 'string' ? entry.country.trim() : '';
     const display = locationLabel(location);
     // Pending, empty and failed lookups do not create placeholder elements.
@@ -600,7 +615,6 @@
       (entry.createdCountryAccurate !== true ? '; X has not confirmed the account creation country' : '');
     badge.title = label;
     badge.setAttribute('aria-label', label);
-    void checkAutoBlock({ link, username, placement }, entry);
   }
 
   function paintUsername(username) {
