@@ -470,18 +470,16 @@
         (entry.accurate === true && entry.createdCountryAccurate === true));
   }
 
-  function canBlockNow(store, users, viewerId, userId, username) {
-    if (!autoBlockSettings?.autoBlockSouthAsia || sessionViewerId() !== viewerId) return false;
+  function currentBlockTarget(store, users, viewerId, userId) {
+    if (!autoBlockSettings?.autoBlockSouthAsia || sessionViewerId() !== viewerId) return null;
     const current = store.getState();
-    const user = users.select(current, userId);
-    return users.selectViewerUser(current)?.id_str === viewerId && !user?.blocking &&
-      findHandles().some(item => {
-        if (item.username !== username || item.placement !== 'header' || !visibleForBlock(item.link)) {
-          return false;
-        }
-        const account = renderedAccount(item.link, username);
-        return account?.userId === userId && account.store === store;
-      });
+    if (users.selectViewerUser(current)?.id_str !== viewerId ||
+        users.select(current, userId)?.blocking) return null;
+    return findHandles().find(item => {
+      if (item.placement !== 'header' || !visibleForBlock(item.link)) return false;
+      const account = renderedAccount(item.link, item.username);
+      return account?.userId === userId && account.store === store;
+    });
   }
 
   function retryBlockCheck(key) {
@@ -500,8 +498,9 @@
       if (users?.selectViewerUser(state)?.id_str !== viewerId || users.select(state, userId)?.blocking) return;
       blockChecks.set(key, Date.now() + LOCATION_TTL);
       await navigator.locks.request('x-account-location-flags:' + key, async () => {
-        if (!canBlockNow(store, users, viewerId, userId, username)) {
+        if (!currentBlockTarget(store, users, viewerId, userId)) {
           blockChecks.delete(key);
+          scheduleScan();
           return;
         }
         // Confirm the displayed account's current location by immutable ID.
@@ -515,12 +514,14 @@
           }
           return;
         }
-        if (!canBlockNow(store, users, viewerId, userId, username)) {
+        const target = currentBlockTarget(store, users, viewerId, userId);
+        if (!target) {
           blockChecks.delete(key);
+          scheduleScan();
           return;
         }
         storeLocation('id:' + userId, result);
-        paintUsername(username);
+        paintUsername(target.username);
         if (qualifiesForBlock(result)) {
           await store.dispatch(users.block(userId));
           if (users.select(store.getState(), userId)?.blocking !== true) retryBlockCheck(key);

@@ -581,6 +581,31 @@ test('auto-block rechecks the current React fiber if X recycles the name during 
   assert.deepEqual(f.blocks, ['3']);
 });
 
+test('a renamed handle keeps its pending check for the same rendered X ID', async () => {
+  let resolveLookup;
+  const pending = new Promise(resolve => { resolveLookup = resolve; });
+  const f = contentFixture({
+    locations: { alice: 'India' },
+    autoBlock: {
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      idLookup: () => pending
+    }
+  });
+  await waitFor(() => f.calls.some(call => call.type === 'lookup-id'));
+  f.links[0].setAttribute('href', '/Alicia');
+  f.handleLinks[0].setAttribute('href', '/Alicia');
+  f.handleLinks[0].textContent = '@Alicia';
+  f.links[0].wrappedJSObject['__reactFiber$test'].memoizedProps.userData.screenName = 'Alicia';
+  resolveLookup({ success: true, country: 'India' });
+  await waitFor(() => f.blocks.length === 1);
+  assert.equal(f.calls.filter(call => call.type === 'lookup-id').length, 1);
+  assert.equal(f.badge(0).dataset.xAccountHandle, 'alicia');
+  assert.deepEqual(f.blocks, ['2']);
+});
+
 test('auto-block skips a write if another tab changed the session identity', async () => {
   let resolveLookup;
   const pending = new Promise(resolve => { resolveLookup = resolve; });
