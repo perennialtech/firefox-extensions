@@ -1046,7 +1046,7 @@ test('Firefox restores original header row layout when chips disappear',
     assert.equal(await page.locator('#row').count(), 0);
   });
 
-test('Firefox prefers a textual name over an adjacent unmarked emoji image',
+test('Firefox prefers a linked textual name over an adjacent unmarked emoji image',
   { timeout: 30_000 }, async t => {
     const browser = await firefox.launch();
     t.after(() => browser.close());
@@ -1054,7 +1054,7 @@ test('Firefox prefers a textual name over an adjacent unmarked emoji image',
     await page.setContent(`
       <section data-testid="UserName">
         <div id="decoration"><div dir="ltr"><img alt="✨"></div></div>
-        <div id="actual-name"><div dir="ltr">Alice</div></div>
+        <div id="actual-name"><a href="/Alice"><div dir="ltr">Alice</div></a></div>
         <div tabindex="-1"><div dir="ltr">@Alice</div></div>
       </section>
     `);
@@ -1068,6 +1068,42 @@ test('Firefox prefers a textual name over an adjacent unmarked emoji image',
     assert.equal(await page.locator('#decoration [data-x-account-flag]').count(), 0);
     assert.deepEqual(await page.locator('#actual-name > [data-x-account-flag]')
       .allTextContents(), ['🇯🇵 JPN']);
+  });
+
+test('Firefox keeps emoji-only name chips off adjacent metadata',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserName">
+        <div id="emoji-name"><a href="/Alice"><div dir="ltr">
+          <img alt="⚡️"></div></a></div>
+        <div id="metadata"><div dir="ltr">Trusted organization</div></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+      <section data-testid="UserName" id="ambiguous">
+        <div id="unlinked-image"><div dir="ltr"><img alt="⚡️"></div></div>
+        <div id="unlinked-text"><div dir="ltr">Trusted organization</div></div>
+        <div tabindex="-1"><div dir="ltr">@Bob</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.lookupHandles = [];
+      window.browser = { runtime: { sendMessage: async ({ username }) => {
+        window.lookupHandles.push(username);
+        return { success: true, country: 'Japan', accurate: true };
+      } } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.locator('#emoji-name > [data-x-account-flag]').waitFor();
+    assert.deepEqual(await page.locator('#emoji-name > [data-x-account-flag]')
+      .allTextContents(), ['🇯🇵 JPN']);
+    await page.waitForTimeout(200);
+    for (const row of ['#metadata', '#unlinked-image', '#unlinked-text']) {
+      assert.equal(await page.locator(`${row} [data-x-account-flag]`).count(), 0, row);
+    }
+    assert.deepEqual(await page.evaluate(() => window.lookupHandles), ['alice']);
   });
 
 test('Firefox annotates quoted-post native name links without explicit roles',

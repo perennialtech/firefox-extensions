@@ -303,11 +303,13 @@
             return isNameCandidate(link) ? [{ link, node, index }] : [];
           });
           let name = names[0];
-          // An unmarked decorative emoji directly before a textual name is
-          // ambiguous. Prefer the adjacent text rather than labeling the icon.
+          // An emoji-only name and an unrelated emoji followed by a text name
+          // look identical without an account link. Prefer the linked candidate
+          // when there is exactly one; never guess between unlinked siblings.
           if (name && !name.node.textContent.trim() &&
             names[1]?.index === name.index + 1 && names[1].node.textContent.trim()) {
-            name = names[1];
+            const linked = names.filter(candidate => candidate.link !== candidate.node);
+            name = linked.length === 1 ? linked[0] : null;
           }
           if (name && !seen.has(name.link)) {
             seen.add(name.link);
