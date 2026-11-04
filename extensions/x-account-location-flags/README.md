@@ -53,10 +53,12 @@ Temporary extensions are removed when Firefox restarts.
 
 ## Privacy and limitations
 
-Looking up an account sends its public handle to FxTwitter, along with normal
-request metadata such as your IP address. The extension does not send X cookies,
-credentials or authorization headers to FxTwitter, and does not require an X
-login of its own. Lookup results are cached in Firefox's local extension storage.
+Location lookups send public handles to FxTwitter. When automatic blocking
+is enabled, the extension also looks up public numeric X account IDs.
+Both lookups include normal request metadata such as your IP address.
+The extension does not send X cookies, credentials or authorization
+headers to FxTwitter, and does not require an X login of its own.
+Handle lookup results are cached in Firefox's local extension storage.
 
 Country names and codes use [ISO 3166-1](https://www.iso.org/iso-3166-country-codes.html)
 and English names from [Unicode CLDR](https://cldr.unicode.org/), with common
