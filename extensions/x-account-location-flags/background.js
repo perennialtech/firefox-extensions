@@ -102,6 +102,10 @@
         createdCountryAccurate: typeof created_country_accurate === 'boolean' ? created_country_accurate : null,
         source: typeof source === 'string' ? source.trim() || null : null
       };
+      // A partial refresh cannot fill the new fields. Keep any still-valid
+      // legacy location until a complete lookup succeeds or its TTL elapses.
+      const cached = cache.get(handle);
+      if (!country && cached?.expires > Date.now()) return cachedResult(cached);
       cache.delete(handle);
       cache.set(handle, {
         ...metadata, expires: Date.now() + (country ? POSITIVE_TTL : EMPTY_TTL)

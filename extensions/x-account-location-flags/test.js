@@ -112,6 +112,21 @@ test('legacy cached locations survive a failed refresh and service cooldown', as
   assert.equal(storage['fxtwitter-locations-v1'].alice.country, 'Japan');
 });
 
+test('an empty metadata refresh does not replace an unexpired legacy location', async () => {
+  const expires = Date.now() + 60000;
+  const storage = {
+    'fxtwitter-locations-v1': {
+      alice: { country: 'Japan', accurate: true, expires }
+    }
+  };
+  const f = backgroundFixture(async () => response(200, { code: 200 }), storage);
+  assert.deepEqual({ ...await f.send('alice') }, {
+    success: true, country: 'Japan', accurate: true, createdCountryAccurate: null, source: null
+  });
+  assert.equal(f.calls.length, 1);
+  assert.equal(storage['fxtwitter-locations-v1'].alice.expires, expires);
+});
+
 test('case-insensitive handle cache avoids repeat requests', async () => {
   const f = backgroundFixture();
   assert.equal((await f.send('ALICE')).country, 'Japan');
