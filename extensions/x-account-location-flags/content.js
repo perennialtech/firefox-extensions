@@ -14,9 +14,8 @@
   const urgent = new Set();
   const inFlight = new Set();
   const queue = [];
-  // Header chips temporarily alter the containing name row's inline layout.
-  // Track only currently decorated rows so reused or detached rows are restored.
-  const headerRowStyles = new Map();
+  // Track decorated rows so detached or reused rows lose our CSS marker.
+  const headerRows = new Set();
   const regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
   // ISO 3166-1 alpha-2 -> alpha-3 (iso-codes project). Limit country
   // lookups to assigned ISO codes: CLDR also names non-country regions.
@@ -216,46 +215,19 @@
   }
 
   function styleHeaderRow(row) {
-    if (!headerRowStyles.has(row)) {
-      headerRowStyles.set(row, {
-        flexDirection: row.style.flexDirection,
-        alignItems: row.style.alignItems,
-        flexPriority: row.style.getPropertyPriority?.('flex-direction') || '',
-        alignPriority: row.style.getPropertyPriority?.('align-items') || ''
-      });
-    }
-    // A low-priority CSS rule supplies flex display without defeating X's
-    // own display:none rules (including classes applied after insertion).
+    headerRows.add(row);
+    // CSS controls the temporary layout without overwriting X's inline styles.
     row.setAttribute?.('data-x-account-flag-header', 'true');
-    row.style.flexDirection = 'row';
-    row.style.alignItems = 'center';
   }
 
   function restoreHeaderRow(row) {
-    const original = headerRowStyles.get(row);
-    if (!original) return;
+    if (!headerRows.has(row)) return;
     row.removeAttribute?.('data-x-account-flag-header');
-    for (const [name, property, priority] of [
-      ['flexDirection', 'flex-direction', 'flexPriority'],
-      ['alignItems', 'align-items', 'alignPriority']
-    ]) {
-      if (original[name]) {
-        if (row.style.setProperty) {
-          row.style.setProperty(property, original[name], original[priority]);
-        } else {
-          row.style[name] = original[name];
-        }
-      } else if (row.style.removeProperty) {
-        row.style.removeProperty(property);
-      } else {
-        delete row.style[name];
-      }
-    }
-    headerRowStyles.delete(row);
+    headerRows.delete(row);
   }
 
   function restoreUnusedHeaderRows() {
-    for (const row of headerRowStyles.keys()) {
+    for (const row of headerRows) {
       // X virtualizes timeline items by detaching entire rows. Their chips
       // remain children of the detached node, but must not keep the row alive
       // through this Map after the next mutation-driven scan.
@@ -293,7 +265,6 @@
       for (let i = links.length - 1; i >= 0; i--) {
         const link = links[i];
         if (link.getAttribute('tabindex') === '-1') continue;
-        if (link.getAttribute('role') !== 'link') continue;
         if (link.closest?.('[data-testid="Tweet-User-Avatar"], [data-testid^="UserAvatar-Container-"]')) continue;
         const path = link.getAttribute('href');
         const match = /^\/([a-zA-Z0-9_]{1,15})\/?$/.exec(path || '');
@@ -320,15 +291,27 @@
             node.closest?.('[tabindex="-1"]'));
           const candidates = handleIndex < 0 ? nameNodes : nameNodes.slice(0, handleIndex);
           // The display name comes before affiliation and other metadata.
-          // This fallback is only for plain-text names. If React removes an
-          // account link's href while recycling a row, descendants inside that
-          // link must not become a second, fake display-name match.
-          const name = candidates.find(node =>
-            !node.closest?.('a, [tabindex="-1"]') &&
-            isNameCandidate(node));
-          if (name && !seen.has(name)) {
-            seen.add(name);
-            found.push({ link: name, username: handle[1].toLowerCase(), placement: 'header' });
+          // If React removes an account link's href while recycling a row,
+          // descendants inside that link must not become a second name match.
+          const username = handle[1].toLowerCase();
+          const names = candidates.flatMap((node, index) => {
+            if (node.closest?.('[tabindex="-1"]')) return [];
+            const anchor = node.closest?.('a');
+            if (anchor && (anchor.getAttribute('href') || '').toLowerCase()
+              .replace(/\/$/, '') !== '/' + username) return [];
+            const link = anchor || node;
+            return isNameCandidate(link) ? [{ link, node, index }] : [];
+          });
+          let name = names[0];
+          // An unmarked decorative emoji directly before a textual name is
+          // ambiguous. Prefer the adjacent text rather than labeling the icon.
+          if (name && !name.node.textContent.trim() &&
+            names[1]?.index === name.index + 1 && names[1].node.textContent.trim()) {
+            name = names[1];
+          }
+          if (name && !seen.has(name.link)) {
+            seen.add(name.link);
+            found.push({ link: name.link, username, placement: 'header' });
           }
         }
       }
@@ -615,9 +598,15 @@
   document.addEventListener('focusin', prioritize, true);
   window.addEventListener('scroll', scheduleScan, true);
   window.addEventListener('resize', scheduleScan);
-  new MutationObserver(scheduleScan).observe(document.documentElement, {
+  new MutationObserver(mutations => {
+    // Our own badge styling runs on every paint. Observe site-owned inline
+    // visibility changes, but do not rescan in response to our style writes.
+    if (mutations.some(mutation => mutation.type !== 'attributes' ||
+      mutation.attributeName !== 'style' ||
+      mutation.target.dataset?.xAccountFlag !== 'true')) scheduleScan();
+  }).observe(document.documentElement, {
     childList: true, subtree: true, attributes: true,
-    attributeFilter: ['href', 'alt', 'class', 'hidden'],
+    attributeFilter: ['href', 'alt', 'class', 'hidden', 'style'],
     characterData: true
   });
   scan();

@@ -1004,8 +1004,12 @@ test('Firefox restores original header row layout when chips disappear',
     const badge = '#row > [data-x-account-flag]';
     await page.locator(badge).waitFor();
     assert.deepEqual(await page.locator('#row').evaluate(row => ({
-      display: getComputedStyle(row).display, flex: row.style.flexDirection, align: row.style.alignItems
-    })), { display: 'flex', flex: 'row', align: 'center' });
+      display: getComputedStyle(row).display,
+      flex: getComputedStyle(row).flexDirection,
+      align: getComputedStyle(row).alignItems,
+      inlineFlex: row.style.flexDirection, inlineAlign: row.style.alignItems
+    })), { display: 'flex', flex: 'row', align: 'center',
+      inlineFlex: 'column', inlineAlign: 'flex-end' });
 
     await page.evaluate(() => document.querySelector('#name').removeAttribute('href'));
     await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
@@ -1016,8 +1020,12 @@ test('Firefox restores original header row layout when chips disappear',
     await page.evaluate(() => document.querySelector('#name').href = '/Alice');
     await page.locator(badge).waitFor();
     assert.deepEqual(await page.locator('#row').evaluate(row => ({
-      display: getComputedStyle(row).display, flex: row.style.flexDirection, align: row.style.alignItems
-    })), { display: 'flex', flex: 'row', align: 'center' });
+      display: getComputedStyle(row).display,
+      flex: getComputedStyle(row).flexDirection,
+      align: getComputedStyle(row).alignItems,
+      inlineFlex: row.style.flexDirection, inlineAlign: row.style.alignItems
+    })), { display: 'flex', flex: 'row', align: 'center',
+      inlineFlex: 'column', inlineAlign: 'flex-end' });
     await page.evaluate(() => document.querySelector('#name').removeAttribute('href'));
     await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
     assert.deepEqual(await page.locator('#row').evaluate(row => ({
@@ -1036,4 +1044,118 @@ test('Firefox restores original header row layout when chips disappear',
       window.detachedRow.style.flexDirection === 'column' &&
       window.detachedRow.style.alignItems === 'flex-end');
     assert.equal(await page.locator('#row').count(), 0);
+  });
+
+test('Firefox prefers a textual name over an adjacent unmarked emoji image',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="UserName">
+        <div id="decoration"><div dir="ltr"><img alt="✨"></div></div>
+        <div id="actual-name"><div dir="ltr">Alice</div></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.locator('#actual-name > [data-x-account-flag]').waitFor();
+    assert.equal(await page.locator('#decoration [data-x-account-flag]').count(), 0);
+    assert.deepEqual(await page.locator('#actual-name > [data-x-account-flag]')
+      .allTextContents(), ['🇯🇵 JPN']);
+  });
+
+test('Firefox annotates quoted-post native name links without explicit roles',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="User-Name">
+        <div id="name-row"><a href="/Alice"><div dir="ltr">Alice</div></a></div>
+        <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'India', accurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.locator('#name-row > [data-x-account-flag]').waitFor();
+    assert.deepEqual(await page.locator('#name-row > [data-x-account-flag]')
+      .allTextContents(), ['🇮🇳 IND']);
+    assert.equal(await page.locator('#name-row a [data-x-account-flag]').count(), 0);
+  });
+
+test('Firefox rescans rows revealed solely by an inline display change',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="User-Name">
+        <div id="row" style="display: none">
+          <a href="/Alice" role="link">Alice</a>
+        </div>
+        <a href="/Alice" tabindex="-1">@Alice</a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'India', accurate: true
+      }) } };
+    });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.waitForTimeout(160);
+    assert.equal(await page.locator('#row [data-x-account-flag]').count(), 0);
+    await page.evaluate(() => { document.querySelector('#row').style.display = 'block'; });
+    await page.locator('#row > [data-x-account-flag]').waitFor();
+    assert.deepEqual(await page.locator('#row > [data-x-account-flag]')
+      .allTextContents(), ['🇮🇳 IND']);
+    await page.waitForTimeout(250);
+    assert.equal(await page.locator('#row > [data-x-account-flag]').count(), 1);
+  });
+
+test('Firefox keeps new site inline layout values after badge removal',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.setContent(`
+      <section data-testid="User-Name">
+        <div id="row" style="flex-direction:column;align-items:flex-start">
+          <a id="name" href="/Alice" role="link">Alice</a>
+        </div>
+        <a href="/Alice" tabindex="-1">@Alice</a>
+      </section>
+    `);
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'Japan', accurate: true
+      }) } };
+    });
+    await page.addStyleTag({ path: path.join(__dirname, 'content.css') });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.locator('#row > [data-x-account-flag]').waitFor();
+    await page.evaluate(() => {
+      const row = document.querySelector('#row');
+      row.style.flexDirection = 'row-reverse';
+      row.style.alignItems = 'flex-end';
+    });
+    assert.deepEqual(await page.locator('#row').evaluate(row => [
+      getComputedStyle(row).flexDirection, getComputedStyle(row).alignItems
+    ]), ['row', 'center']);
+    await page.evaluate(() => document.querySelector('#name').removeAttribute('href'));
+    await page.waitForFunction(() => !document.querySelector('#row [data-x-account-flag]'));
+    assert.deepEqual(await page.locator('#row').evaluate(row => [
+      row.style.flexDirection, row.style.alignItems,
+      getComputedStyle(row).flexDirection, getComputedStyle(row).alignItems
+    ]), ['row-reverse', 'flex-end', 'row-reverse', 'flex-end']);
   });

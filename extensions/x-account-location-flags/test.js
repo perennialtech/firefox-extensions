@@ -203,7 +203,9 @@ function contentFixture(options = {}) {
       textContent: ''
     });
     const row = {
-      style: {},
+      style: {}, attrs: {},
+      setAttribute(name, value) { this.attrs[name] = value; },
+      removeAttribute(name) { delete this.attrs[name]; },
       children: [display],
       insertions: 0,
       insertBefore(child, anchor) {
@@ -338,8 +340,8 @@ test('chip takes its intrinsic width immediately BEFORE display-name link', asyn
   const [badge, name] = f.rows[0].children;
   assert.equal(name, f.links[0]);
   assert.equal(f.badge(0), badge);
-  assert.equal(f.rows[0].style.flexDirection, 'row');
-  assert.equal(f.rows[0].style.alignItems, 'center');
+  assert.equal(f.rows[0].attrs['data-x-account-flag-header'], 'true');
+  assert.deepEqual(f.rows[0].style, {});
   assert.equal(badge.style.marginInlineStart, '0');
   assert.equal(badge.style.width, undefined);
   assert.equal(badge.style.minWidth, undefined);
@@ -800,7 +802,7 @@ test('quoted-post header with plain-text name and tabindex handle renders locati
   assert.deepEqual(f.calls.map(call => call.username), ['peterj_walker']);
   assert.equal(f.rows[0].children[0], f.badge(0));
   assert.equal(f.rows[0].children[1], f.links[0]);
-  assert.equal(f.rows[0].style.flexDirection, 'row');
+  assert.equal(f.rows[0].attrs['data-x-account-flag-header'], 'true');
   assert.equal(f.badge(0).style.flex, '0 0 auto');
   assert.equal(f.badge(0).style.width, undefined);
   f.listeners.get('scroll')();
