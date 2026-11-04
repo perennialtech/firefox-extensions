@@ -22,6 +22,12 @@ You need Firefox 140 or newer.
 2. Open `about:addons` in Firefox, select the gear menu, and choose **Install Add-on From File**.
 3. Select the downloaded `.xpi`, then open or refresh [X](https://x.com/).
 
+The extension automatically blocks accounts with a South Asian location
+when their names come into view while you are signed in to X. This also
+includes missing or uncertain accuracy data. In `about:addons`, open the
+extension's preferences to turn off automatic blocking or exclude uncertain
+accounts. To unblock an account, use X's blocked accounts settings.
+
 The signed extension stays installed after Firefox restarts. Starting with
 version 0.2.0, Firefox can update it automatically from GitHub Releases using
 the [update manifest](https://perennialtech.github.io/firefox-extensions/updates.json).

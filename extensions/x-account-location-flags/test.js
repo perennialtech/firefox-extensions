@@ -37,7 +37,8 @@ function backgroundFixture(fetchImpl = async () => response(), storage = {}) {
   async function send(username, priority = false) {
     return handlers[0]({ type: 'lookup', username, priority });
   }
-  return { browser, storage, calls, send };
+  const sendId = userId => handlers[0]({ type: 'lookup-id', userId });
+  return { browser, storage, calls, send, sendId };
 }
 
 async function waitFor(predicate, ms = 2000) {
@@ -139,6 +140,18 @@ test('invalid handles are rejected before any request', async () => {
     assert.equal(await f.send(handle), undefined);
   }
   assert.equal(f.calls.length, 0);
+});
+
+test('immutable X IDs keep their full precision in lookup URLs and cache keys', async () => {
+  const f = backgroundFixture();
+  for (const id of [undefined, '', '-1', 'a123', '12/about', 123]) {
+    assert.equal(await f.sendId(id), undefined);
+  }
+  const id = '9007199254740993';
+  assert.equal((await f.sendId(id)).country, 'Japan');
+  assert.equal((await f.sendId(id)).country, 'Japan');
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].url, 'https://api.fxtwitter.com/2/profile/id:' + id + '/about');
 });
 
 test('missing about metadata caches a valid empty answer', async () => {
@@ -329,6 +342,7 @@ function contentFixture(options = {}) {
   }
   const document = {
     documentElement: { clientHeight: 800, clientWidth: 900 },
+    visibilityState: 'visible',
     querySelectorAll: selector => selector.startsWith('[data-testid=') &&
       !selector.includes(' > ') ? containers : [],
     addEventListener(name, fn) { listeners.set(name, fn); },
@@ -342,6 +356,7 @@ function contentFixture(options = {}) {
     runtime: {
       async sendMessage(message) {
         calls.push(message);
+        if (message.type === 'lookup-id') return options.autoBlock.idLookup(message.userId);
         if (options.lookup) return options.lookup(message);
         return {
           success: true,
@@ -352,16 +367,113 @@ function contentFixture(options = {}) {
       }
     }
   };
+  const blocks = [];
+  let settingsChanged;
+  if (options.autoBlock) {
+    const profiles = options.autoBlock.profiles;
+    const users = {
+      selectViewerUser: () => profiles.viewer,
+      selectByScreenName: (_, name) => profiles[name],
+      select: (_, id) => Object.values(profiles).find(user => user.id_str === id),
+      block: id => id
+    };
+    const store = { getState: () => profiles, async dispatch(id) { blocks.push(id); } };
+    function require() { return { users }; }
+    require.m = { 1: () => ({ context: 'ACTION_BLOCK', selectViewerUser: null }) };
+    window.wrappedJSObject = {
+      webpackChunk_twitter_responsive_web: { push: chunk => chunk[2](require) }
+    };
+    for (const link of links) {
+      link.wrappedJSObject = { '__reactFiber$test': { memoizedProps: { value: { store } } } };
+      link.checkVisibility = () => true;
+    }
+    browser.storage = {
+      local: { async get(defaults) { return { ...defaults, ...options.autoBlock.settings }; } },
+      onChanged: { addListener(fn) { settingsChanged = fn; } }
+    };
+  }
   load('content.js', {
     document, window, browser, Date, Intl, URL,
+    navigator: { locks: { request: (_, __, callback) => callback({}) } },
+    cloneInto: value => value,
     setTimeout, clearTimeout,
     location: { origin: 'https://x.com', href: 'https://x.com/home' },
     MutationObserver: class { observe() {} }
   });
   const badge = index => rows[index].children.find(node => node.dataset?.xAccountFlag);
   return { calls, listeners, links, handleLinks, rows, containers,
-    badges, badge, bioRows, profileBio };
+    badges, badge, bioRows, profileBio, blocks, settingsChanged };
 }
+
+test('auto-block defaults include uncertain locations and verify the exact X identity', async () => {
+  const handles = ['Viewer', 'Uncertain', 'Reused', 'AlreadyBlocked', 'Offscreen', 'Outside'];
+  const f = contentFixture({
+    accounts: handles.map((handle, i) => ({
+      handle, name: handle, type: 'User-Name', offscreen: i === 4
+    })),
+    locations: Object.fromEntries(handles.map(handle => [
+      handle.toLowerCase(), handle === 'Outside' ? 'Japan' : 'India'
+    ])),
+    autoBlock: {
+      profiles: Object.fromEntries(handles.map((handle, i) => [handle.toLowerCase(), {
+        screen_name: handle, id_str: String(i + 1), blocking: i === 3
+      }])),
+      idLookup: id => ({ success: true, country: id === '2' ? 'Pakistan' : 'Japan' })
+    }
+  });
+  await waitFor(() => f.blocks.length === 1 &&
+    f.calls.some(call => call.type === 'lookup-id' && call.userId === '3'));
+  f.listeners.get('scroll')();
+  await waitFor(() => handles.every((_, i) => f.badge(i)));
+  assert.deepEqual(f.blocks, ['2']);
+  assert.deepEqual(f.calls.filter(call => call.type === 'lookup-id').map(call => call.userId).sort(), ['2', '3']);
+});
+
+test('turning auto-block off during an ID lookup prevents the pending write', async () => {
+  let resolveLookup;
+  const pending = new Promise(resolve => { resolveLookup = resolve; });
+  const settings = {};
+  const f = contentFixture({
+    locations: { alice: 'Southern Asia' },
+    autoBlock: {
+      settings,
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      idLookup: () => pending
+    }
+  });
+  await waitFor(() => f.calls.some(call => call.type === 'lookup-id'));
+  settings.autoBlockSouthAsia = false;
+  f.settingsChanged({ autoBlockSouthAsia: { newValue: false } }, 'local');
+  resolveLookup({ success: true, country: 'India', accurate: true, createdCountryAccurate: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.blocks, []);
+});
+
+test('excluding uncertain cases requires both accuracy fields from the immutable ID lookup', async () => {
+  let certain = false;
+  const settings = { autoBlockUncertain: false };
+  const f = contentFixture({
+    locations: { alice: 'India' },
+    autoBlock: {
+      settings,
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      idLookup: () => ({ success: true, country: 'India', accurate: true,
+        createdCountryAccurate: certain ? true : null })
+    }
+  });
+  await waitFor(() => f.calls.some(call => call.type === 'lookup-id'));
+  assert.deepEqual(f.blocks, []);
+  certain = true;
+  f.settingsChanged({ autoBlockUncertain: { newValue: false } }, 'local');
+  await waitFor(() => f.blocks.length === 1);
+  assert.deepEqual(f.blocks, ['2']);
+});
 
 test('all DOM-mounted accounts are prefetched before they enter the viewport', async () => {
   const f = contentFixture();

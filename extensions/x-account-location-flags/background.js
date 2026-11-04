@@ -12,6 +12,7 @@
   const MAX_ACTIVE = 4;
   const REQUEST_INTERVAL = 200;
   const HANDLE = /^[a-zA-Z0-9_]{1,15}$/;
+  const USER_ID = /^[0-9]+$/;
 
   const cache = new Map();
   const pending = new Map();
@@ -30,7 +31,8 @@
         const paused = Number(stored[RATE_LIMIT_KEY]);
         if (Number.isFinite(paused) && paused > now) blockedUntil = paused;
         for (const [handle, value] of Object.entries(stored[STORAGE_KEY] || {})) {
-          if (/^[a-z0-9_]{1,15}$/.test(handle) && value &&
+          if ((HANDLE.test(handle) || (handle.startsWith('id:') && USER_ID.test(handle.slice(3)))) &&
+              value &&
               value.expires > now &&
               (value.country === null || typeof value.country === 'string') &&
               (value.accurate === null || typeof value.accurate === 'boolean') &&
@@ -180,8 +182,14 @@
   }
 
   browser.runtime.onMessage.addListener(message => {
-    if (message?.type !== 'lookup' || typeof message.username !== 'string' ||
-        !HANDLE.test(message.username)) return undefined;
-    return lookup(message.username.toLowerCase(), message.priority === true);
+    if (message?.type === 'lookup' && typeof message.username === 'string' &&
+        HANDLE.test(message.username)) {
+      return lookup(message.username.toLowerCase(), message.priority === true);
+    }
+    if (message?.type === 'lookup-id' && typeof message.userId === 'string' &&
+        USER_ID.test(message.userId)) {
+      return lookup('id:' + message.userId, true);
+    }
+    return undefined;
   });
 })();

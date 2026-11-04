@@ -163,6 +163,11 @@
   let scanTimer = null;
   let retryTimer = null;
   let retryAt = 0;
+  let xRequire;
+  let usersModule;
+  let autoBlockSettings;
+  const blockChecks = new Map();
+  const AUTO_BLOCK_DEFAULTS = { autoBlockSouthAsia: true, autoBlockUncertain: true };
 
   function locationLabel(location) {
     if (!location) return '';
@@ -392,6 +397,93 @@
     return rect.bottom > 0 && rect.top < height && rect.right > 0 && rect.left < width;
   }
 
+  function getXUsersModule() {
+    if (usersModule) return usersModule;
+    const page = window.wrappedJSObject;
+    const chunks = page?.webpackChunk_twitter_responsive_web;
+    if (!chunks) return null;
+    // Use X's native action so its request gets the current session and
+    // transaction headers and updates the same state as the Block menu.
+    if (!xRequire) {
+      chunks.push(cloneInto([['x-account-location-flags'], {}, require => {
+        xRequire = require.wrappedJSObject || require;
+      }], page, { cloneFunctions: true }));
+    }
+    const match = Object.entries(xRequire?.m || {}).find(([, factory]) => {
+      const source = Function.prototype.toString.call(factory);
+      return source.includes('ACTION_BLOCK') && source.includes('selectViewerUser:');
+    });
+    if (!match) return null;
+    usersModule = Object.values(xRequire(match[0])).find(module =>
+      typeof module?.block === 'function' && typeof module.select === 'function' &&
+      typeof module.selectByScreenName === 'function' && typeof module.selectViewerUser === 'function');
+    return usersModule;
+  }
+
+  function getXStore(link) {
+    // The name link is already mounted inside the app's Redux provider.
+    const node = link.wrappedJSObject;
+    if (!node) return null;
+    const key = Object.keys(node).find(key => key.startsWith('__reactFiber$'));
+    for (let fiber = node[key]; fiber; fiber = fiber.return) {
+      const store = fiber.memoizedProps?.value?.store;
+      if (typeof store?.dispatch === 'function' && typeof store.getState === 'function') return store;
+    }
+    return null;
+  }
+
+  function visibleForBlock(link) {
+    return document.visibilityState === 'visible' &&
+      link.checkVisibility({ visibilityProperty: true }) && visible(link);
+  }
+
+  function qualifiesForBlock(entry) {
+    return autoBlockSettings?.autoBlockSouthAsia && entry?.country &&
+      isSouthAsianLocation(entry.country) && (autoBlockSettings.autoBlockUncertain ||
+        (entry.accurate === true && entry.createdCountryAccurate === true));
+  }
+
+  async function checkAutoBlock({ link, username, placement }, entry) {
+    if (placement !== 'header' || !qualifiesForBlock(entry) || !visibleForBlock(link)) return;
+    try {
+      const store = getXStore(link);
+      const users = store && getXUsersModule();
+      if (!users) return;
+      const state = store.getState();
+      const viewerId = users.selectViewerUser(state)?.id_str;
+      const target = users.selectByScreenName(state, username);
+      if (!viewerId || !target?.id_str || viewerId === target.id_str || target.blocking) return;
+      const userId = target.id_str;
+      const key = viewerId + ':' + userId;
+      const checkedUntil = blockChecks.get(key);
+      if (checkedUntil > Date.now()) return;
+      blockChecks.set(key, entry.expires);
+      // Resolve metadata by immutable ID before any write. A cached handle
+      // lookup can refer to another account if a handle was reassigned.
+      const result = await browser.runtime.sendMessage({ type: 'lookup-id', userId });
+      if (!result?.success) {
+        if (result?.retryAt > Date.now()) {
+          blockChecks.set(key, result.retryAt);
+          delayRetry(result.retryAt);
+        }
+        return;
+      }
+      if (!qualifiesForBlock(result)) return;
+      await navigator.locks.request('x-account-location-flags:' + key, { ifAvailable: true }, async lock => {
+        if (!lock || !qualifiesForBlock(result) || !findHandles().some(item =>
+          item.username === username && item.placement === 'header' && visibleForBlock(item.link))) return;
+        const current = store.getState();
+        const user = users.select(current, userId);
+        if (users.selectViewerUser(current)?.id_str === viewerId &&
+            user?.screen_name?.toLowerCase() === username && !user.blocking) {
+          await store.dispatch(users.block(userId));
+        }
+      });
+    } catch (_) {
+      console.warn('[X Account Location Flags] Could not automatically block @' + username);
+    }
+  }
+
   function paint({ link, username, placement }, entry) {
     // Profile descriptions can contain multiple mentions in one inline span.
     // Place each chip inside its link so it wraps with that mention, without
@@ -471,6 +563,7 @@
       (entry.createdCountryAccurate !== true ? '; X has not confirmed the account creation country' : '');
     badge.title = label;
     badge.setAttribute('aria-label', label);
+    void checkAutoBlock({ link, username, placement }, entry);
   }
 
   function paintUsername(username) {
@@ -551,6 +644,10 @@
   }
 
   function scan() {
+    const now = Date.now();
+    for (const [key, expiry] of blockChecks) {
+      if (expiry <= now) blockChecks.delete(key);
+    }
     const items = findHandles();
     // React can reuse an existing row while its name/handle are being changed.
     // Reconcile every chip with currently matched names, not just bio links.
@@ -604,6 +701,31 @@
     if (!target) return;
     const match = findHandles(target).find(({ link }) => visible(link));
     if (match) enqueue(match.username, true);
+  }
+
+  if (window.wrappedJSObject) {
+    let settingsRequest;
+    const refreshAutoBlockSettings = () => {
+      autoBlockSettings = null;
+      const request = browser.storage.local.get(AUTO_BLOCK_DEFAULTS);
+      settingsRequest = request;
+      void request.then(settings => {
+        if (settingsRequest !== request) return;
+        autoBlockSettings = {
+          autoBlockSouthAsia: settings.autoBlockSouthAsia !== false,
+          autoBlockUncertain: settings.autoBlockUncertain !== false
+        };
+        blockChecks.clear();
+        scheduleScan();
+      }).catch(() => {});
+    };
+    browser.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && Object.keys(AUTO_BLOCK_DEFAULTS).some(key => key in changes)) {
+        refreshAutoBlockSettings();
+      }
+    });
+    refreshAutoBlockSettings();
+    document.addEventListener('visibilitychange', scheduleScan);
   }
 
   document.addEventListener('pointerover', prioritize, true);
