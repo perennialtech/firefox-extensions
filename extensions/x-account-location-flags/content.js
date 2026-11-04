@@ -12,6 +12,7 @@
   const LOOKUP_FAILURE_TTL = 30000;
   const LOCATION_TTL = 30 * 60 * 1000;
   const entries = new Map();
+  const idEntries = new Map();
   const queued = new Set();
   const urgent = new Set();
   const inFlight = new Set();
@@ -520,7 +521,7 @@
           scheduleScan();
           return;
         }
-        storeLocation('id:' + userId, result);
+        idEntries.set(userId, { ...result, expires: Date.now() + LOCATION_TTL });
         paintUsername(target.username);
         if (qualifiesForBlock(result)) {
           await store.dispatch(users.block(userId));
@@ -546,11 +547,12 @@
       child.dataset?.xAccountFlag === 'true');
     let badge = existing.find(child => child.dataset.xAccountHandle === username);
     for (const old of existing) if (old !== badge) old.remove();
-    if (placement === 'header' && autoBlockSettings?.autoBlockSouthAsia) {
+    const autoBlock = autoBlockSettings?.autoBlockSouthAsia;
+    if (placement === 'header' && (autoBlock || idEntries.size)) {
       const account = renderedAccount(link, username);
       if (account) {
-        if (visibleForBlock(link)) void checkAutoBlock(username, account);
-        const byId = entries.get('id:' + account.userId);
+        if (autoBlock && visibleForBlock(link)) void checkAutoBlock(username, account);
+        const byId = idEntries.get(account.userId);
         if (byId?.expires > Date.now()) entry = byId;
       }
     }
@@ -673,8 +675,8 @@
     }, Math.max(1, retryAt - Date.now()));
   }
 
-  function storeLocation(key, result) {
-    entries.set(key, { ...result, expires: Date.now() + LOCATION_TTL });
+  function storeLocation(username, result) {
+    entries.set(username, { ...result, expires: Date.now() + LOCATION_TTL });
   }
 
   function refreshLocation(username, priority) {
@@ -721,8 +723,8 @@
     for (const [key, expiry] of blockChecks) {
       if (expiry <= now) blockChecks.delete(key);
     }
-    for (const [key, entry] of entries) {
-      if (entry.expires <= now) entries.delete(key);
+    for (const [userId, entry] of idEntries) {
+      if (entry.expires <= now) idEntries.delete(userId);
     }
     const items = findHandles();
     // React can reuse an existing row while its name/handle are being changed.

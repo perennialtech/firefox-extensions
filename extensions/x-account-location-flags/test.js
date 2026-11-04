@@ -652,6 +652,29 @@ test('auto-block waits for the account lock before looking up fresh metadata', a
   assert.deepEqual(f.blocks, ['2']);
 });
 
+test('turning auto-block off preserves location chips already checked by ID', async () => {
+  const settings = {};
+  const f = contentFixture({
+    locations: { alice: 'Japan' },
+    autoBlock: {
+      settings,
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      idLookup: () => ({ success: true, country: 'India' })
+    }
+  });
+  await waitFor(() => f.blocks.length === 1);
+  const badge = f.badge(0);
+  badge.style.fontFamily = 'serif';
+  settings.autoBlockSouthAsia = false;
+  f.settingsChanged({ autoBlockSouthAsia: { newValue: false } }, 'local');
+  await waitFor(() => badge.style.fontFamily !== 'serif');
+  assert.equal(badge.textContent, '🇮🇳 IND');
+  assert.equal(f.calls.filter(call => call.type === 'lookup-id').length, 1);
+});
+
 test('turning auto-block off during an ID lookup prevents the pending write', async () => {
   let resolveLookup;
   const pending = new Promise(resolve => { resolveLookup = resolve; });
