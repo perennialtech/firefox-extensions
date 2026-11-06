@@ -57,7 +57,7 @@ test('Firefox computes sans-serif fonts for all chip placements under serif pare
     const regularChip = page.locator('#regular > [data-x-account-flag]');
     assert.equal(await regularChip.textContent(), '🇯🇵 JPN via USA');
     assert.equal(await regularChip.evaluate(chip => getComputedStyle(chip).backgroundColor),
-      'rgb(252, 211, 77)');
+      'rgb(245, 245, 245)');
 
     async function fontSnapshot() {
       return page.evaluate(selectors => selectors.map(selector => {

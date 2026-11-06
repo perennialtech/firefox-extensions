@@ -7,8 +7,8 @@ alpha-3 code (such as 🇯🇵 JPN); geographic regions use short labels (such a
 SE Asia or LATAM). When X reports a connection source that differs from the
 location, the chip adds it after `via`, for example `JPN via USA` or
 `JPN via Web`. Southern Asia and its countries use pale red chips. Other
-chips are amber when X has not confirmed the location or the account creation
-country; this highlight can be turned off in the extension's preferences.
+chips can optionally be highlighted in amber when X has not confirmed the
+location or the account creation country. This highlight is off by default.
 
 Locations come from [FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/)
 and **do not establish where a person actually lives or is currently located**.
@@ -23,13 +23,13 @@ You need Firefox 140 or newer.
 2. Open `about:addons` in Firefox, select the gear menu, and choose **Install Add-on From File**.
 3. Select the downloaded `.xpi`, then open or refresh [X](https://x.com/).
 
-While you are signed in to X, the extension automatically blocks visible
-accounts based in South Asia. Accounts whose location X has not confirmed are
-also blocked when either their location or their connection source is in
-South Asia. Before blocking, it checks the account's current location by its
-X account ID. In `about:addons`, open the extension's preferences to turn off
-automatic blocking or exclude unconfirmed accounts. To unblock an account, use
-X's blocked accounts settings.
+Automatic blocking is off by default. In `about:addons`, open the extension's
+preferences to enable blocking visible accounts based in South Asia. When
+enabled, the extension also blocks accounts whose location X has not confirmed
+if either their location or their connection source is in South Asia. Before
+blocking, it checks the account's current location by its X account ID. You
+can exclude unconfirmed accounts in the preferences. To unblock an account,
+use X's blocked accounts settings.
 
 The signed extension stays installed after Firefox restarts. Starting with
 version 0.2.0, Firefox can update it automatically from GitHub Releases using

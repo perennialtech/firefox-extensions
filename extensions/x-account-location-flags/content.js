@@ -170,7 +170,7 @@
   let usersModule;
   const blockChecks = new Map();
   const SETTING_DEFAULTS = {
-    autoBlockSouthAsia: true, autoBlockUncertain: true, highlightUncertain: true
+    autoBlockSouthAsia: false, autoBlockUncertain: true, highlightUncertain: false
   };
   // Null until loaded from storage; an auto-block decision needs the user's
   // actual settings, never the defaults.
@@ -634,7 +634,7 @@
     badge.style.fontSize = '0.75rem';
     badge.style.paddingInline = '0.35rem';
     const southAsia = isSouthAsianLocation(location);
-    const highlight = !isConfirmed(entry) && settings?.highlightUncertain !== false;
+    const highlight = !isConfirmed(entry) && settings?.highlightUncertain === true;
     badge.style.backgroundColor = southAsia ? SOUTH_ASIA_BACKGROUND :
       highlight ? UNCERTAIN_BACKGROUND : '#f5f5f5';
     badge.style.color = southAsia ? SOUTH_ASIA_TEXT : '#171717';
@@ -812,8 +812,7 @@
       settingsRequest = request;
       void request.then(stored => {
         if (settingsRequest !== request) return;
-        settings = Object.fromEntries(Object.keys(SETTING_DEFAULTS)
-          .map(key => [key, stored[key] !== false]));
+        settings = stored;
         blockChecks.clear();
         scheduleScan();
       }).catch(() => {});

@@ -5,12 +5,15 @@ const autoBlock = document.getElementById('autoBlockSouthAsia');
 const uncertain = document.getElementById('autoBlockUncertain');
 const inputs = [highlight, autoBlock, uncertain];
 const status = document.getElementById('status');
+const defaults = {
+  highlightUncertain: false, autoBlockSouthAsia: false, autoBlockUncertain: true
+};
 
 async function load() {
   try {
-    const settings = await browser.storage.local.get(inputs.map(input => input.id));
+    const settings = await browser.storage.local.get(defaults);
     for (const input of inputs) {
-      input.checked = settings[input.id] !== false;
+      input.checked = settings[input.id] === true;
       input.disabled = false;
     }
     uncertain.disabled = !autoBlock.checked;
