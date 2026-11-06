@@ -56,9 +56,36 @@ test('signed-in Firefox renders a location chip on the live X profile',
       'return document.cookie.split("; ").some(cookie => cookie.startsWith("auth_token="))'),
     false, 'the X session token must not be readable by page scripts');
 
-    await driver.wait(async () =>
-      (await driver.findElements(By.css('[data-testid="SideNav_AccountSwitcher_Button"]')))
-        .length > 0, 30_000, 'the X test account did not sign in');
+    try {
+      await driver.wait(async () =>
+        (await driver.findElements(By.css('[data-testid="SideNav_AccountSwitcher_Button"]')))
+          .length > 0, 30_000, 'the X test account did not sign in');
+    } catch (error) {
+      // Only report known page states. Never dump page content, URLs with
+      // query strings, cookies, or screenshots from an authenticated browser.
+      const state = await driver.executeScript(`
+        const text = document.body?.innerText || '';
+        return {
+          host: location.hostname,
+          route: location.pathname === '/github' ? 'profile' :
+            location.pathname.startsWith('/i/flow/login') ? 'login' :
+            location.pathname.startsWith('/account/access') ? 'account-access' : 'other',
+          readyState: document.readyState,
+          mainColumn: !!document.querySelector('[data-testid="primaryColumn"]'),
+          profileHeader: !!document.querySelector('[data-testid="UserName"]'),
+          loginForm: !!document.querySelector('input[autocomplete="username"]'),
+          loginLink: !!document.querySelector('a[href*="/i/flow/login"]'),
+          challenge: /verify (you are human|your identity)|unusual activity|just a moment/i.test(text),
+          loginPrompt: /log in to x|sign in to x|sign in to twitter/i.test(text),
+          siteError: /something went wrong|try again later|temporarily unavailable/i.test(text)
+        };
+      `).catch(() => ({ browserState: 'unavailable' }));
+      const cookies = await Promise.all(['auth_token', 'ct0'].map(async name =>
+        !!(await driver.manage().getCookie(name))));
+      throw new Error('X did not show the signed-in UI: ' +
+        JSON.stringify({ ...state, authCookiePresent: cookies[0], csrfCookiePresent: cookies[1] }),
+      { cause: error });
+    }
 
     const badgeSelector = '[data-x-account-flag="true"][data-x-account-handle="github"]';
     await driver.wait(async () =>
