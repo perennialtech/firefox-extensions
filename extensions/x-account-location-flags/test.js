@@ -433,7 +433,6 @@ function contentFixture(options = {}) {
   }
   load('content.js', {
     document, window, browser, Date: options.autoBlock?.clock || Date, Intl, URL,
-    navigator: { locks: { request: options.autoBlock?.lock || ((_, callback) => callback()) } },
     cloneInto: value => value,
     setTimeout: options.autoBlock?.setTimeout || setTimeout, clearTimeout,
     location: { origin: 'https://x.com', href: 'https://x.com/home' },
@@ -465,47 +464,64 @@ test('auto-block defaults include uncertain locations and verify the exact X ide
   f.listeners.get('scroll')();
   await waitFor(() => handles.every((_, i) => f.badge(i)));
   assert.deepEqual(f.blocks, ['2']);
-  assert.deepEqual(f.calls.filter(call => call.type === 'lookup-id').map(call => call.userId).sort(), ['2', '3', '6']);
+  assert.deepEqual(f.calls.filter(call => call.type === 'lookup-id').map(call => call.userId).sort(), ['2', '3']);
 });
 
-test('a fresh ID check detects a South Asian account despite an older neutral chip', async () => {
+test('auto-block only checks accounts the handle lookup already selects', async () => {
+  const cases = {
+    japan: { country: 'Japan', accurate: true, createdCountryAccurate: true, source: 'United States App Store' },
+    viaindia: { country: 'Japan', createdCountryAccurate: true, source: 'India App Store' },
+    confirmedviaindia: { country: 'Japan', accurate: true, createdCountryAccurate: true, source: 'India App Store' },
+    uncertainjapan: { country: 'Japan', createdCountryAccurate: true, source: 'Japan App Store' },
+    viasouthasia: { country: 'East Asia', createdCountryAccurate: true, source: 'South Asia App Store' }
+  };
+  const handles = ['Viewer', ...Object.keys(cases)];
   const f = contentFixture({
-    locations: { alice: 'Japan', bob: null },
+    accounts: handles.map(handle => ({ handle, name: handle, type: 'User-Name' })),
+    lookup: ({ username }) => ({ success: true, country: 'Japan', ...cases[username] }),
     autoBlock: {
+      profiles: Object.fromEntries(handles.map((handle, i) => [handle.toLowerCase(), {
+        screen_name: handle, id_str: String(i + 1)
+      }])),
+      idLookup: id => ({ success: true, ...Object.values(cases)[Number(id) - 2] })
+    }
+  });
+  await waitFor(() => f.blocks.length === 2);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(f.blocks.sort(), ['3', '6']);
+  assert.deepEqual(f.calls.filter(call => call.type === 'lookup-id').map(call => call.userId).sort(), ['3', '6']);
+});
+
+test('excluding uncertain accounts ignores South Asian connection sources', async () => {
+  const f = contentFixture({
+    lookup: () => ({ success: true, country: 'Japan', createdCountryAccurate: true, source: 'India App Store' }),
+    autoBlock: {
+      settings: { autoBlockUncertain: false },
       profiles: {
         viewer: { id_str: '1', screen_name: 'Viewer' },
         alice: { id_str: '2', screen_name: 'Alice' },
         bob: { id_str: '3', screen_name: 'Bob' }
       },
-      idLookup: () => ({ success: true, country: 'India' })
+      idLookup: () => { throw new Error('unexpected ID lookup'); }
     }
   });
-  await waitFor(() => f.blocks.length === 2);
-  assert.deepEqual(f.blocks.sort(), ['2', '3']);
-  assert.equal(f.badge(0).textContent, '🇮🇳 IND');
-  assert.equal(f.badge(1).textContent, '🇮🇳 IND');
+  await waitFor(() => f.badge(0) && f.badge(1));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(f.blocks, []);
+  assert.equal(f.calls.some(call => call.type === 'lookup-id'), false);
+  assert.equal(f.badge(0).textContent, '🇯🇵 JPN via IND');
 });
 
-test('auto-block checks an ID when the handle lookup fails or is still pending', async () => {
-  let finish;
-  const pending = new Promise(resolve => { finish = resolve; });
+test('the amber highlight for unconfirmed locations can be turned off', async () => {
+  const settings = { highlightUncertain: false, autoBlockSouthAsia: false };
   const f = contentFixture({
-    lookup: ({ username }) => username === 'alice' ? pending : { success: false },
-    autoBlock: {
-      profiles: {
-        viewer: { id_str: '1', screen_name: 'Viewer' },
-        alice: { id_str: '2', screen_name: 'Alice' },
-        bob: { id_str: '3', screen_name: 'Bob' }
-      },
-      idLookup: () => ({ success: true, country: 'India' })
-    }
+    lookup: () => ({ success: true, country: 'Japan', createdCountryAccurate: true, source: 'Web' }),
+    autoBlock: { settings, profiles: { viewer: { id_str: '1', screen_name: 'Viewer' } } }
   });
-  await waitFor(() => f.blocks.length === 2);
-  finish({ success: true, country: 'Japan' });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(f.blocks.sort(), ['2', '3']);
-  assert.equal(f.badge(0).textContent, '🇮🇳 IND');
-  assert.equal(f.badge(1).textContent, '🇮🇳 IND');
+  await waitFor(() => f.badge(0)?.style.backgroundColor === '#f5f5f5');
+  settings.highlightUncertain = true;
+  f.settingsChanged({ highlightUncertain: { newValue: true } }, 'local');
+  await waitFor(() => f.badge(0).style.backgroundColor === '#fcd34d');
 });
 
 test('different rendered account IDs with the same handle keep their own location chips', async () => {
@@ -518,7 +534,7 @@ test('different rendered account IDs with the same handle keep their own locatio
       { handle: 'Alice', name: 'Former' },
       { handle: 'Alice', name: 'Current' }
     ],
-    locations: { alice: 'Japan' },
+    locations: { alice: 'India' },
     autoBlock: {
       profiles: { viewer: { id_str: '1', screen_name: 'Viewer' }, former, current },
       renderedProfiles: [former, current],
@@ -626,36 +642,10 @@ test('auto-block skips a write if another tab changed the session identity', asy
   assert.deepEqual(f.blocks, []);
 });
 
-test('auto-block waits for the account lock before looking up fresh metadata', async () => {
-  let acquire;
-  const held = new Promise(resolve => { acquire = resolve; });
-  let waiting = false;
-  const f = contentFixture({
-    locations: { alice: 'India' },
-    autoBlock: {
-      profiles: {
-        viewer: { id_str: '1', screen_name: 'Viewer' },
-        alice: { id_str: '2', screen_name: 'Alice' }
-      },
-      lock: async (_, callback) => {
-        waiting = true;
-        await held;
-        return callback();
-      },
-      idLookup: () => ({ success: true, country: 'India' })
-    }
-  });
-  await waitFor(() => waiting);
-  assert.equal(f.calls.some(call => call.type === 'lookup-id'), false);
-  acquire();
-  await waitFor(() => f.blocks.length === 1);
-  assert.deepEqual(f.blocks, ['2']);
-});
-
 test('turning auto-block off preserves location chips already checked by ID', async () => {
   const settings = {};
   const f = contentFixture({
-    locations: { alice: 'Japan' },
+    locations: { alice: 'Pakistan' },
     autoBlock: {
       settings,
       profiles: {
@@ -740,10 +730,9 @@ test('a failed ID lookup retries before the handle entry expires', async () => {
   assert.deepEqual(f.blocks, ['2']);
 });
 
-test('a rejected lock or native block retries using a fresh ID lookup', async () => {
+test('a rejected native block retries using a fresh ID lookup', async () => {
   let now = Date.now();
   let retry;
-  let locks = 0;
   let writes = 0;
   let lookups = 0;
   const f = contentFixture({
@@ -761,10 +750,6 @@ test('a rejected lock or native block retries using a fresh ID lookup', async ()
         }
         return setTimeout(callback, delay);
       },
-      lock: async (_, callback) => {
-        if (++locks === 1) throw new Error('Lock unavailable');
-        return callback();
-      },
       idLookup: () => {
         lookups++;
         return { success: true, country: 'India' };
@@ -776,16 +761,10 @@ test('a rejected lock or native block retries using a fresh ID lookup', async ()
   });
   await waitFor(() => retry);
   assert.deepEqual(f.blocks, []);
-  assert.equal(lookups, 0);
-  const firstRetry = retry;
-  now += retry.delay;
-  retry.callback();
-  await waitFor(() => retry !== firstRetry);
-  assert.deepEqual(f.blocks, []);
+  assert.equal(lookups, 1);
   now += retry.delay;
   retry.callback();
   await waitFor(() => f.blocks.length === 1);
-  assert.equal(locks, 3);
   assert.equal(lookups, 2);
   assert.equal(writes, 2);
 });
@@ -864,10 +843,16 @@ test('chips show connection sources and reflect both accuracy fields with South 
       '🇯🇵 JPN via USA', '#fcd34d'],
     [{ country: 'Japan', accurate: true, createdCountryAccurate: true, source: 'Web' },
       '🇯🇵 JPN via Web', '#f5f5f5'],
-    [{ country: 'Japan', accurate: false, createdCountryAccurate: true, source: 'Canada Google Play Store' },
+    [{ country: 'Japan', accurate: false, createdCountryAccurate: true, source: 'Canada Android App' },
       '🇯🇵 JPN via CAN', '#fcd34d'],
-    [{ country: 'Japan', accurate: true, createdCountryAccurate: false, source: 'Unknown Store' },
-      '🇯🇵 JPN via Unknown Store', '#fcd34d'],
+    [{ country: 'Japan', accurate: true, createdCountryAccurate: false, source: 'East Asia App Store' },
+      '🇯🇵 JPN via E Asia', '#fcd34d'],
+    [{ country: 'Japan', accurate: true, createdCountryAccurate: true, source: 'Japan App Store' },
+      '🇯🇵 JPN', '#f5f5f5'],
+    [{ country: 'North America', accurate: true, createdCountryAccurate: true, source: 'North America App Store' },
+      'N America', '#f5f5f5'],
+    [{ country: 'East Asia', accurate: true, createdCountryAccurate: true, source: 'North America App Store' },
+      'E Asia via N America', '#f5f5f5'],
     [{ country: 'Japan', accurate: true },
       '🇯🇵 JPN', '#fcd34d'],
     [{ country: 'India', accurate: false, source: 'Web' },
@@ -884,7 +869,7 @@ test('chips show connection sources and reflect both accuracy fields with South 
   }
   assert.match(f.badge(0).title, /connected via United States App Store/);
   assert.match(f.badge(0).title, /has not confirmed this location/);
-  assert.match(f.badge(4).title, /has not confirmed the account creation country/);
+  assert.match(f.badge(7).title, /has not confirmed the account creation country/);
 });
 
 test('header, quoted-post and bio chips assign and reapply the sans-serif font stack', async () => {
