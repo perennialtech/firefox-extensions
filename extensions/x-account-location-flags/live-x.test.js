@@ -67,7 +67,8 @@ test('signed-in Firefox renders a location chip on the live X profile',
         const text = document.body?.innerText || '';
         const navigation = performance.getEntriesByType('navigation').at(-1);
         const resources = performance.getEntriesByType('resource');
-        const scripts = resources.filter(entry => entry.initiatorType === 'script');
+        const scripts = resources.filter(entry => entry.initiatorType === 'script' ||
+          (entry.initiatorType === 'link' && /\\.m?js(?:[?#]|$)/i.test(entry.name)));
         return {
           host: location.hostname,
           route: location.pathname === '/github' ? 'profile' :
