@@ -41,6 +41,9 @@ jobs:
       - if: runner.os == 'Windows'
         run: npx playwright install firefox
       - run: npm run test:firefox
+      - if: runner.os == 'Windows'
+        name: Check public X HTTP response
+        run: curl.exe -L -sS --max-time 20 -o NUL -w 'PUBLIC_X_HTTP=%{http_code}' https://x.com/github
   live-x:
     name: Authenticated X extension (Firefox)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
