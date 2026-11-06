@@ -80,11 +80,12 @@ test('signed-in Firefox renders a location chip on the live X profile',
           siteError: /something went wrong|try again later|temporarily unavailable/i.test(text)
         };
       `).catch(() => ({ browserState: 'unavailable' }));
-      const cookieNames = (await driver.manage().getCookies()).map(cookie => cookie.name);
+      const cookieNames = await driver.manage().getCookies()
+        .then(cookies => cookies.map(cookie => cookie.name), () => null);
       throw new Error('X did not show the signed-in UI: ' +
         JSON.stringify({ ...state,
-          authCookiePresent: cookieNames.includes('auth_token'),
-          csrfCookiePresent: cookieNames.includes('ct0') }),
+          authCookiePresent: cookieNames?.includes('auth_token') ?? null,
+          csrfCookiePresent: cookieNames?.includes('ct0') ?? null }),
       { cause: error });
     }
 
