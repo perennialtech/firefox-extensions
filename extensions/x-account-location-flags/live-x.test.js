@@ -46,7 +46,8 @@ test('signed-in Firefox renders a location chip on the live X profile',
     await driver.get('https://x.com/github');
     for (const [name, value] of [['auth_token', authToken], ['ct0', ct0]]) {
       await driver.manage().addCookie({
-        name, value, path: '/', secure: true, httpOnly: name === 'auth_token'
+        name, value, path: '/', secure: true, sameSite: 'Lax',
+        httpOnly: name === 'auth_token'
       });
     }
     await driver.navigate().refresh();
