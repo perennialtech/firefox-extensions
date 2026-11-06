@@ -433,7 +433,6 @@ function contentFixture(options = {}) {
   }
   load('content.js', {
     document, window, browser, Date: options.autoBlock?.clock || Date, Intl, URL,
-    navigator: { locks: { request: options.autoBlock?.lock || ((_, callback) => callback()) } },
     cloneInto: value => value,
     setTimeout: options.autoBlock?.setTimeout || setTimeout, clearTimeout,
     location: { origin: 'https://x.com', href: 'https://x.com/home' },
@@ -444,7 +443,7 @@ function contentFixture(options = {}) {
     badges, badge, bioRows, profileBio, blocks, settingsChanged, document };
 }
 
-test('auto-block defaults include uncertain locations and verify the exact X identity', async () => {
+test('enabled auto-block includes uncertain locations and verifies the exact X identity', async () => {
   const handles = ['Viewer', 'Uncertain', 'Reused', 'AlreadyBlocked', 'Offscreen', 'Outside', 'Transparent'];
   const f = contentFixture({
     accounts: handles.map((handle, i) => ({
@@ -454,6 +453,7 @@ test('auto-block defaults include uncertain locations and verify the exact X ide
       handle.toLowerCase(), handle === 'Outside' ? 'Japan' : 'India'
     ])),
     autoBlock: {
+      settings: { autoBlockSouthAsia: true },
       profiles: Object.fromEntries(handles.map((handle, i) => [handle.toLowerCase(), {
         screen_name: handle, id_str: String(i + 1), blocking: i === 3
       }])),
@@ -465,47 +465,127 @@ test('auto-block defaults include uncertain locations and verify the exact X ide
   f.listeners.get('scroll')();
   await waitFor(() => handles.every((_, i) => f.badge(i)));
   assert.deepEqual(f.blocks, ['2']);
-  assert.deepEqual(f.calls.filter(call => call.type === 'lookup-id').map(call => call.userId).sort(), ['2', '3', '6']);
+  assert.deepEqual(f.calls.filter(call => call.type === 'lookup-id').map(call => call.userId).sort(), ['2', '3']);
 });
 
-test('a fresh ID check detects a South Asian account despite an older neutral chip', async () => {
+test('automatic blocking and amber highlighting are off without saved settings', async () => {
   const f = contentFixture({
-    locations: { alice: 'Japan', bob: null },
+    accounts: [{ handle: 'Alice', name: 'Alice' }, { handle: 'Bob', name: 'Bob' }],
+    lookup: ({ username }) => ({
+      success: true, country: username === 'alice' ? 'India' : 'Japan',
+      createdCountryAccurate: true, source: 'India App Store'
+    }),
     autoBlock: {
+      settings: {},
       profiles: {
         viewer: { id_str: '1', screen_name: 'Viewer' },
         alice: { id_str: '2', screen_name: 'Alice' },
         bob: { id_str: '3', screen_name: 'Bob' }
       },
-      idLookup: () => ({ success: true, country: 'India' })
+      idLookup: () => { throw new Error('unexpected ID lookup'); }
+    }
+  });
+  await waitFor(() => f.badge(0) && f.badge(1));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(f.blocks, []);
+  assert.equal(f.calls.some(call => call.type === 'lookup-id'), false);
+  assert.equal(f.badge(0).style.backgroundColor, '#fca5a5');
+  assert.equal(f.badge(1).style.backgroundColor, '#f5f5f5');
+});
+
+test('options default to blocking and highlight off and retain opt-in choices', async () => {
+  const saved = {};
+  function optionsFixture() {
+    const inputs = Object.fromEntries(['highlightUncertain', 'autoBlockSouthAsia', 'autoBlockUncertain']
+      .map(id => [id, { id, checked: false, disabled: true, addEventListener(_, callback) {
+        this.onChange = callback;
+      } }]));
+    const status = { textContent: '' };
+    load('options.js', {
+      document: { getElementById: id => id === 'status' ? status : inputs[id] },
+      browser: { storage: { local: {
+        async get(defaults) { return { ...defaults, ...saved }; },
+        async set(value) { Object.assign(saved, value); }
+      } } }
+    });
+    return inputs;
+  }
+  const inputs = optionsFixture();
+  await waitFor(() => !inputs.highlightUncertain.disabled);
+  assert.equal(inputs.highlightUncertain.checked, false);
+  assert.equal(inputs.autoBlockSouthAsia.checked, false);
+  assert.equal(inputs.autoBlockUncertain.checked, true);
+  assert.equal(inputs.autoBlockUncertain.disabled, true);
+
+  inputs.autoBlockSouthAsia.checked = true;
+  await inputs.autoBlockSouthAsia.onChange();
+  inputs.highlightUncertain.checked = true;
+  await inputs.highlightUncertain.onChange();
+  assert.deepEqual(saved, { autoBlockSouthAsia: true, highlightUncertain: true });
+
+  const reloaded = optionsFixture();
+  await waitFor(() => !reloaded.highlightUncertain.disabled);
+  assert.equal(reloaded.autoBlockSouthAsia.checked, true);
+  assert.equal(reloaded.highlightUncertain.checked, true);
+  assert.equal(reloaded.autoBlockUncertain.disabled, false);
+});
+
+test('auto-block only checks accounts the handle lookup already selects', async () => {
+  const cases = {
+    japan: { country: 'Japan', accurate: true, createdCountryAccurate: true, source: 'United States App Store' },
+    viaindia: { country: 'Japan', createdCountryAccurate: true, source: 'India App Store' },
+    confirmedviaindia: { country: 'Japan', accurate: true, createdCountryAccurate: true, source: 'India App Store' },
+    uncertainjapan: { country: 'Japan', createdCountryAccurate: true, source: 'Japan App Store' },
+    viasouthasia: { country: 'East Asia', createdCountryAccurate: true, source: 'South Asia App Store' }
+  };
+  const handles = ['Viewer', ...Object.keys(cases)];
+  const f = contentFixture({
+    accounts: handles.map(handle => ({ handle, name: handle, type: 'User-Name' })),
+    lookup: ({ username }) => ({ success: true, country: 'Japan', ...cases[username] }),
+    autoBlock: {
+      settings: { autoBlockSouthAsia: true },
+      profiles: Object.fromEntries(handles.map((handle, i) => [handle.toLowerCase(), {
+        screen_name: handle, id_str: String(i + 1)
+      }])),
+      idLookup: id => ({ success: true, ...Object.values(cases)[Number(id) - 2] })
     }
   });
   await waitFor(() => f.blocks.length === 2);
-  assert.deepEqual(f.blocks.sort(), ['2', '3']);
-  assert.equal(f.badge(0).textContent, '🇮🇳 IND');
-  assert.equal(f.badge(1).textContent, '🇮🇳 IND');
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(f.blocks.sort(), ['3', '6']);
+  assert.deepEqual(f.calls.filter(call => call.type === 'lookup-id').map(call => call.userId).sort(), ['3', '6']);
 });
 
-test('auto-block checks an ID when the handle lookup fails or is still pending', async () => {
-  let finish;
-  const pending = new Promise(resolve => { finish = resolve; });
+test('excluding uncertain accounts ignores South Asian connection sources', async () => {
   const f = contentFixture({
-    lookup: ({ username }) => username === 'alice' ? pending : { success: false },
+    lookup: () => ({ success: true, country: 'Japan', createdCountryAccurate: true, source: 'India App Store' }),
     autoBlock: {
+      settings: { autoBlockSouthAsia: true, autoBlockUncertain: false },
       profiles: {
         viewer: { id_str: '1', screen_name: 'Viewer' },
         alice: { id_str: '2', screen_name: 'Alice' },
         bob: { id_str: '3', screen_name: 'Bob' }
       },
-      idLookup: () => ({ success: true, country: 'India' })
+      idLookup: () => { throw new Error('unexpected ID lookup'); }
     }
   });
-  await waitFor(() => f.blocks.length === 2);
-  finish({ success: true, country: 'Japan' });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(f.blocks.sort(), ['2', '3']);
-  assert.equal(f.badge(0).textContent, '🇮🇳 IND');
-  assert.equal(f.badge(1).textContent, '🇮🇳 IND');
+  await waitFor(() => f.badge(0) && f.badge(1));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(f.blocks, []);
+  assert.equal(f.calls.some(call => call.type === 'lookup-id'), false);
+  assert.equal(f.badge(0).textContent, '🇯🇵 JPN via IND');
+});
+
+test('the amber highlight for unconfirmed locations can be enabled', async () => {
+  const settings = {};
+  const f = contentFixture({
+    lookup: () => ({ success: true, country: 'Japan', createdCountryAccurate: true, source: 'Web' }),
+    autoBlock: { settings, profiles: { viewer: { id_str: '1', screen_name: 'Viewer' } } }
+  });
+  await waitFor(() => f.badge(0)?.style.backgroundColor === '#f5f5f5');
+  settings.highlightUncertain = true;
+  f.settingsChanged({ highlightUncertain: { newValue: true } }, 'local');
+  await waitFor(() => f.badge(0).style.backgroundColor === '#fcd34d');
 });
 
 test('different rendered account IDs with the same handle keep their own location chips', async () => {
@@ -518,8 +598,9 @@ test('different rendered account IDs with the same handle keep their own locatio
       { handle: 'Alice', name: 'Former' },
       { handle: 'Alice', name: 'Current' }
     ],
-    locations: { alice: 'Japan' },
+    locations: { alice: 'India' },
     autoBlock: {
+      settings: { autoBlockSouthAsia: true },
       profiles: { viewer: { id_str: '1', screen_name: 'Viewer' }, former, current },
       renderedProfiles: [former, current],
       idLookup: id => id === '2' ? pending : { success: true, country: 'India' }
@@ -537,6 +618,7 @@ test('auto-block uses the rendered account when X retains a former handle owner'
   const f = contentFixture({
     locations: { alice: 'India' },
     autoBlock: {
+      settings: { autoBlockSouthAsia: true },
       profiles: {
         viewer: { id_str: '1', screen_name: 'Viewer' },
         alice: { id_str: '2', screen_name: 'Alice' },
@@ -557,6 +639,7 @@ test('auto-block rechecks the current React fiber if X recycles the name during 
   const f = contentFixture({
     locations: { alice: 'India' },
     autoBlock: {
+      settings: { autoBlockSouthAsia: true },
       profiles: {
         viewer: { id_str: '1', screen_name: 'Viewer' },
         alice: { id_str: '2', screen_name: 'Alice' },
@@ -587,6 +670,7 @@ test('a renamed handle keeps its pending check for the same rendered X ID', asyn
   const f = contentFixture({
     locations: { alice: 'India' },
     autoBlock: {
+      settings: { autoBlockSouthAsia: true },
       profiles: {
         viewer: { id_str: '1', screen_name: 'Viewer' },
         alice: { id_str: '2', screen_name: 'Alice' }
@@ -612,6 +696,7 @@ test('auto-block skips a write if another tab changed the session identity', asy
   const f = contentFixture({
     locations: { alice: 'India' },
     autoBlock: {
+      settings: { autoBlockSouthAsia: true },
       profiles: {
         viewer: { id_str: '1', screen_name: 'Viewer' },
         alice: { id_str: '2', screen_name: 'Alice' }
@@ -626,36 +711,10 @@ test('auto-block skips a write if another tab changed the session identity', asy
   assert.deepEqual(f.blocks, []);
 });
 
-test('auto-block waits for the account lock before looking up fresh metadata', async () => {
-  let acquire;
-  const held = new Promise(resolve => { acquire = resolve; });
-  let waiting = false;
-  const f = contentFixture({
-    locations: { alice: 'India' },
-    autoBlock: {
-      profiles: {
-        viewer: { id_str: '1', screen_name: 'Viewer' },
-        alice: { id_str: '2', screen_name: 'Alice' }
-      },
-      lock: async (_, callback) => {
-        waiting = true;
-        await held;
-        return callback();
-      },
-      idLookup: () => ({ success: true, country: 'India' })
-    }
-  });
-  await waitFor(() => waiting);
-  assert.equal(f.calls.some(call => call.type === 'lookup-id'), false);
-  acquire();
-  await waitFor(() => f.blocks.length === 1);
-  assert.deepEqual(f.blocks, ['2']);
-});
-
 test('turning auto-block off preserves location chips already checked by ID', async () => {
-  const settings = {};
+  const settings = { autoBlockSouthAsia: true };
   const f = contentFixture({
-    locations: { alice: 'Japan' },
+    locations: { alice: 'Pakistan' },
     autoBlock: {
       settings,
       profiles: {
@@ -678,7 +737,7 @@ test('turning auto-block off preserves location chips already checked by ID', as
 test('turning auto-block off during an ID lookup prevents the pending write', async () => {
   let resolveLookup;
   const pending = new Promise(resolve => { resolveLookup = resolve; });
-  const settings = {};
+  const settings = { autoBlockSouthAsia: true };
   const f = contentFixture({
     locations: { alice: 'Southern Asia' },
     autoBlock: {
@@ -705,6 +764,7 @@ test('a failed ID lookup retries before the handle entry expires', async () => {
   const f = contentFixture({
     locations: { alice: 'India' },
     autoBlock: {
+      settings: { autoBlockSouthAsia: true },
       profiles: {
         viewer: { id_str: '1', screen_name: 'Viewer' },
         alice: { id_str: '2', screen_name: 'Alice' }
@@ -740,15 +800,15 @@ test('a failed ID lookup retries before the handle entry expires', async () => {
   assert.deepEqual(f.blocks, ['2']);
 });
 
-test('a rejected lock or native block retries using a fresh ID lookup', async () => {
+test('a rejected native block retries using a fresh ID lookup', async () => {
   let now = Date.now();
   let retry;
-  let locks = 0;
   let writes = 0;
   let lookups = 0;
   const f = contentFixture({
     locations: { alice: 'India' },
     autoBlock: {
+      settings: { autoBlockSouthAsia: true },
       profiles: {
         viewer: { id_str: '1', screen_name: 'Viewer' },
         alice: { id_str: '2', screen_name: 'Alice' }
@@ -761,10 +821,6 @@ test('a rejected lock or native block retries using a fresh ID lookup', async ()
         }
         return setTimeout(callback, delay);
       },
-      lock: async (_, callback) => {
-        if (++locks === 1) throw new Error('Lock unavailable');
-        return callback();
-      },
       idLookup: () => {
         lookups++;
         return { success: true, country: 'India' };
@@ -776,23 +832,17 @@ test('a rejected lock or native block retries using a fresh ID lookup', async ()
   });
   await waitFor(() => retry);
   assert.deepEqual(f.blocks, []);
-  assert.equal(lookups, 0);
-  const firstRetry = retry;
-  now += retry.delay;
-  retry.callback();
-  await waitFor(() => retry !== firstRetry);
-  assert.deepEqual(f.blocks, []);
+  assert.equal(lookups, 1);
   now += retry.delay;
   retry.callback();
   await waitFor(() => f.blocks.length === 1);
-  assert.equal(locks, 3);
   assert.equal(lookups, 2);
   assert.equal(writes, 2);
 });
 
 test('excluding uncertain cases requires both accuracy fields from the immutable ID lookup', async () => {
   let certain = false;
-  const settings = { autoBlockUncertain: false };
+  const settings = { autoBlockSouthAsia: true, autoBlockUncertain: false };
   const f = contentFixture({
     locations: { alice: 'India' },
     autoBlock: {
@@ -831,7 +881,7 @@ test('legacy chips stay visible while their metadata refresh is pending', async 
     }
   });
   await waitFor(() => f.badge(0)?.textContent === '🇯🇵 JPN');
-  assert.equal(f.badge(0).style.backgroundColor, '#fcd34d');
+  assert.equal(f.badge(0).style.backgroundColor, '#f5f5f5');
   finish({
     success: true, country: 'Japan', accurate: true,
     createdCountryAccurate: true, source: 'United States App Store'
@@ -861,15 +911,21 @@ test('chip takes its intrinsic width immediately BEFORE display-name link', asyn
 test('chips show connection sources and reflect both accuracy fields with South Asia precedence', async () => {
   const cases = [
     [{ country: 'Japan', createdCountryAccurate: true, source: 'United States App Store' },
-      '🇯🇵 JPN via USA', '#fcd34d'],
+      '🇯🇵 JPN via USA', '#f5f5f5'],
     [{ country: 'Japan', accurate: true, createdCountryAccurate: true, source: 'Web' },
       '🇯🇵 JPN via Web', '#f5f5f5'],
-    [{ country: 'Japan', accurate: false, createdCountryAccurate: true, source: 'Canada Google Play Store' },
-      '🇯🇵 JPN via CAN', '#fcd34d'],
-    [{ country: 'Japan', accurate: true, createdCountryAccurate: false, source: 'Unknown Store' },
-      '🇯🇵 JPN via Unknown Store', '#fcd34d'],
+    [{ country: 'Japan', accurate: false, createdCountryAccurate: true, source: 'Canada Android App' },
+      '🇯🇵 JPN via CAN', '#f5f5f5'],
+    [{ country: 'Japan', accurate: true, createdCountryAccurate: false, source: 'East Asia App Store' },
+      '🇯🇵 JPN via E Asia', '#f5f5f5'],
+    [{ country: 'Japan', accurate: true, createdCountryAccurate: true, source: 'Japan App Store' },
+      '🇯🇵 JPN', '#f5f5f5'],
+    [{ country: 'North America', accurate: true, createdCountryAccurate: true, source: 'North America App Store' },
+      'N America', '#f5f5f5'],
+    [{ country: 'East Asia', accurate: true, createdCountryAccurate: true, source: 'North America App Store' },
+      'E Asia via N America', '#f5f5f5'],
     [{ country: 'Japan', accurate: true },
-      '🇯🇵 JPN', '#fcd34d'],
+      '🇯🇵 JPN', '#f5f5f5'],
     [{ country: 'India', accurate: false, source: 'Web' },
       '🇮🇳 IND via Web', '#fca5a5']
   ];
@@ -884,7 +940,7 @@ test('chips show connection sources and reflect both accuracy fields with South 
   }
   assert.match(f.badge(0).title, /connected via United States App Store/);
   assert.match(f.badge(0).title, /has not confirmed this location/);
-  assert.match(f.badge(4).title, /has not confirmed the account creation country/);
+  assert.match(f.badge(7).title, /has not confirmed the account creation country/);
 });
 
 test('header, quoted-post and bio chips assign and reapply the sans-serif font stack', async () => {

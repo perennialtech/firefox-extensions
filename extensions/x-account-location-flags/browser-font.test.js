@@ -57,7 +57,7 @@ test('Firefox computes sans-serif fonts for all chip placements under serif pare
     const regularChip = page.locator('#regular > [data-x-account-flag]');
     assert.equal(await regularChip.textContent(), '🇯🇵 JPN via USA');
     assert.equal(await regularChip.evaluate(chip => getComputedStyle(chip).backgroundColor),
-      'rgb(252, 211, 77)');
+      'rgb(245, 245, 245)');
 
     async function fontSnapshot() {
       return page.evaluate(selectors => selectors.map(selector => {
@@ -677,6 +677,15 @@ test('Firefox prefers the account name over avatar and unrelated image links',
         <div id="mixed-name"><div dir="ltr">Eve</div></div>
         <a href="/Eve" role="link" tabindex="-1">@Eve</a>
       </section>
+      <section data-testid="User-Name" id="affiliate">
+        <div id="affiliate-name"><a href="/Starlink" role="link">
+          <div dir="ltr"><span>Starlink</span></div>
+          <div dir="ltr"><div tabindex="0" role="link">
+            <img src="https://pbs.twimg.com/profile_images/456/spacex_bigger.jpg" alt="">
+          </div></div>
+        </a></div>
+        <a href="/Starlink" role="link" tabindex="-1">@Starlink</a>
+      </section>
     `);
     await page.evaluate(() => {
       window.lookupHandles = [];
@@ -689,13 +698,14 @@ test('Firefox prefers the account name over avatar and unrelated image links',
     await page.waitForFunction(() =>
       document.querySelector('#alice-name > [data-x-account-flag]') &&
       document.querySelector('#profile-name > [data-x-account-flag]') &&
-      document.querySelector('#mixed-name > [data-x-account-flag]'));
+      document.querySelector('#mixed-name > [data-x-account-flag]') &&
+      document.querySelector('#affiliate-name > [data-x-account-flag]'));
     assert.equal(await page.locator('#avatar-row [data-x-account-flag]').count(), 0);
     assert.equal(await page.locator('#avatar-only [data-x-account-flag]').count(), 0);
     assert.equal(await page.locator('#misc-row [data-x-account-flag]').count(), 0);
     assert.equal(await page.locator('#mixed-avatar [data-x-account-flag]').count(), 0);
     assert.deepEqual(await page.evaluate(() => window.lookupHandles.sort()),
-      ['_voltcrash', 'alice', 'eve']);
+      ['_voltcrash', 'alice', 'eve', 'starlink']);
   });
 
 test('Firefox reconciles reused name rows and observes emoji alt changes',

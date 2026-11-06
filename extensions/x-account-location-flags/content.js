@@ -168,26 +168,35 @@
   let retryAt = 0;
   let xRequire;
   let usersModule;
-  let autoBlockSettings;
   const blockChecks = new Map();
-  const AUTO_BLOCK_DEFAULTS = { autoBlockSouthAsia: true, autoBlockUncertain: true };
+  const SETTING_DEFAULTS = {
+    autoBlockSouthAsia: false, autoBlockUncertain: true, highlightUncertain: false
+  };
+  // Null until loaded from storage; an auto-block decision needs the user's
+  // actual settings, never the defaults.
+  let settings = null;
 
-  function locationLabel(location) {
-    if (!location) return '';
+  function placeLabel(location) {
     const key = locationKey(location);
     const code = countries.get(key);
-    if (code) {
-      const flag = String.fromCodePoint(...[...code].map(c => 127397 + c.charCodeAt(0)));
-      return flag + ' ' + countryCodes.get(code);
-    }
+    if (code) return countryCodes.get(code);
     const region = regionCodes.get(key);
     if (region) return regionAbbreviations[region] || regionNames.of(region);
     return otherAbbreviations[key] || location;
   }
 
-  function sourceLabel(source) {
-    const country = source.replace(/\s+(?:App Store|Google Play(?: Store)?)$/i, '');
-    return countryCodes.get(countries.get(locationKey(country))) || source;
+  function locationLabel(location) {
+    if (!location) return '';
+    const code = countries.get(locationKey(location));
+    const flag = code ? String.fromCodePoint(...[...code].map(c => 127397 + c.charCodeAt(0))) + ' ' : '';
+    return flag + placeLabel(location);
+  }
+
+  // X reports sources such as "Japan App Store", "United States Android App",
+  // "East Asia App Store" and "Web". Keep only the place, or the whole
+  // source when it names no place.
+  function sourcePlace(source) {
+    return source.replace(/\s+(?:App Store|Android App)$/i, '');
   }
 
   function isSouthAsianLocation(location) {
@@ -224,7 +233,12 @@
       '[class*="avatar" i], [class*="affiliation" i], [id*="avatar" i], [id*="affiliation" i]')) {
       return false;
     }
-    if (node.querySelector?.('img[src*="/profile_images/"]')) return false;
+    // An affiliate badge inside the name link is a nested link with the
+    // affiliate's profile image; only a direct profile image marks an avatar.
+    if ([...(node.querySelectorAll?.('img[src*="/profile_images/"]') || [])]
+      .some(img => img.parentElement?.closest('[role="link"]') === node.closest?.('[role="link"]'))) {
+      return false;
+    }
     return hasDisplayName(node);
   }
 
@@ -465,14 +479,22 @@
       link.checkVisibility({ opacityProperty: true, visibilityProperty: true }) && visible(link);
   }
 
+  function isConfirmed(entry) {
+    return entry.accurate === true && entry.createdCountryAccurate === true;
+  }
+
+  // Block South Asian locations. When X has not confirmed the location, a
+  // South Asian connection source (e.g. JPN via IND) also counts.
   function qualifiesForBlock(entry) {
-    return entry?.country && isSouthAsianLocation(entry.country) &&
-      (autoBlockSettings.autoBlockUncertain ||
-        (entry.accurate === true && entry.createdCountryAccurate === true));
+    if (!entry || !settings?.autoBlockSouthAsia) return false;
+    const uncertain = !isConfirmed(entry);
+    if (uncertain && !settings.autoBlockUncertain) return false;
+    return Boolean(entry.country && isSouthAsianLocation(entry.country)) ||
+      Boolean(uncertain && entry.source && isSouthAsianLocation(sourcePlace(entry.source)));
   }
 
   function currentBlockTarget(store, users, viewerId, userId) {
-    if (!autoBlockSettings?.autoBlockSouthAsia || sessionViewerId() !== viewerId) return null;
+    if (!settings?.autoBlockSouthAsia || sessionViewerId() !== viewerId) return null;
     const current = store.getState();
     if (users.selectViewerUser(current)?.id_str !== viewerId ||
         users.select(current, userId)?.blocking) return null;
@@ -489,49 +511,47 @@
   }
 
   async function checkAutoBlock(username, { store, userId }) {
+    let key;
     try {
       const viewerId = sessionViewerId();
       if (!viewerId || viewerId === userId) return;
-      const key = viewerId + ':' + userId;
+      key = viewerId + ':' + userId;
       if (blockChecks.get(key) > Date.now()) return;
+      blockChecks.set(key, Date.now() + LOCATION_TTL);
       const users = getXUsersModule();
       const state = store.getState();
       if (users?.selectViewerUser(state)?.id_str !== viewerId || users.select(state, userId)?.blocking) return;
-      blockChecks.set(key, Date.now() + LOCATION_TTL);
-      await navigator.locks.request('x-account-location-flags:' + key, async () => {
-        if (!currentBlockTarget(store, users, viewerId, userId)) {
-          blockChecks.delete(key);
-          scheduleScan();
-          return;
+      if (!currentBlockTarget(store, users, viewerId, userId)) {
+        blockChecks.delete(key);
+        scheduleScan();
+        return;
+      }
+      // The handle lookup can be cached for days. Confirm the displayed
+      // account's current location by immutable ID before blocking.
+      const result = await browser.runtime.sendMessage({ type: 'lookup-id', userId }).catch(() => null);
+      if (!result?.success) {
+        if (result?.retryAt > Date.now()) {
+          blockChecks.set(key, result.retryAt);
+          delayRetry(result.retryAt);
+        } else {
+          retryBlockCheck(key);
         }
-        // Confirm the displayed account's current location by immutable ID.
-        const result = await browser.runtime.sendMessage({ type: 'lookup-id', userId }).catch(() => null);
-        if (!result?.success) {
-          if (result?.retryAt > Date.now()) {
-            blockChecks.set(key, result.retryAt);
-            delayRetry(result.retryAt);
-          } else {
-            retryBlockCheck(key);
-          }
-          return;
-        }
-        const target = currentBlockTarget(store, users, viewerId, userId);
-        if (!target) {
-          blockChecks.delete(key);
-          scheduleScan();
-          return;
-        }
-        idEntries.set(userId, { ...result, expires: Date.now() + LOCATION_TTL });
-        paintUsername(target.username);
-        if (qualifiesForBlock(result)) {
-          await store.dispatch(users.block(userId));
-          if (users.select(store.getState(), userId)?.blocking !== true) retryBlockCheck(key);
-        }
-      }).catch(error => {
-        retryBlockCheck(key);
-        throw error;
-      });
+        return;
+      }
+      const target = currentBlockTarget(store, users, viewerId, userId);
+      if (!target) {
+        blockChecks.delete(key);
+        scheduleScan();
+        return;
+      }
+      idEntries.set(userId, { ...result, expires: Date.now() + LOCATION_TTL });
+      paintUsername(target.username);
+      if (qualifiesForBlock(result)) {
+        await store.dispatch(users.block(userId));
+        if (users.select(store.getState(), userId)?.blocking !== true) retryBlockCheck(key);
+      }
     } catch (_) {
+      if (key) retryBlockCheck(key);
       console.warn('[X Account Location Flags] Could not automatically block @' + username);
     }
   }
@@ -547,11 +567,11 @@
       child.dataset?.xAccountFlag === 'true');
     let badge = existing.find(child => child.dataset.xAccountHandle === username);
     for (const old of existing) if (old !== badge) old.remove();
-    const autoBlock = autoBlockSettings?.autoBlockSouthAsia;
-    if (placement === 'header' && (autoBlock || idEntries.size)) {
+    const candidate = qualifiesForBlock(entry);
+    if (placement === 'header' && (candidate || idEntries.size)) {
       const account = renderedAccount(link, username);
       if (account) {
-        if (autoBlock && visibleForBlock(link)) void checkAutoBlock(username, account);
+        if (candidate && visibleForBlock(link)) void checkAutoBlock(username, account);
         const byId = idEntries.get(account.userId);
         if (byId?.expires > Date.now()) entry = byId;
       }
@@ -607,15 +627,16 @@
       }
     }
 
-    const text = entry.source ? display + ' via ' + sourceLabel(entry.source) : display;
+    const via = entry.source ? placeLabel(sourcePlace(entry.source)) : '';
+    const text = via && via !== placeLabel(location) ? display + ' via ' + via : display;
     if (badge.textContent !== text) badge.textContent = text;
     badge.style.fontFamily = CHIP_FONT_FAMILY;
     badge.style.fontSize = '0.75rem';
     badge.style.paddingInline = '0.35rem';
     const southAsia = isSouthAsianLocation(location);
-    const confirmed = entry.accurate === true && entry.createdCountryAccurate === true;
+    const highlight = !isConfirmed(entry) && settings?.highlightUncertain === true;
     badge.style.backgroundColor = southAsia ? SOUTH_ASIA_BACKGROUND :
-      confirmed ? '#f5f5f5' : UNCERTAIN_BACKGROUND;
+      highlight ? UNCERTAIN_BACKGROUND : '#f5f5f5';
     badge.style.color = southAsia ? SOUTH_ASIA_TEXT : '#171717';
     badge.style.borderRadius = '0';
     const label = 'Account based in ' + location + ' (according to X)' +
@@ -783,28 +804,25 @@
     if (match) enqueue(match.username, true);
   }
 
-  if (window.wrappedJSObject) {
+  if (browser.storage) {
     let settingsRequest;
-    const refreshAutoBlockSettings = () => {
-      autoBlockSettings = null;
-      const request = browser.storage.local.get(AUTO_BLOCK_DEFAULTS);
+    const refreshSettings = () => {
+      settings = null;
+      const request = browser.storage.local.get(SETTING_DEFAULTS);
       settingsRequest = request;
-      void request.then(settings => {
+      void request.then(stored => {
         if (settingsRequest !== request) return;
-        autoBlockSettings = {
-          autoBlockSouthAsia: settings.autoBlockSouthAsia !== false,
-          autoBlockUncertain: settings.autoBlockUncertain !== false
-        };
+        settings = stored;
         blockChecks.clear();
         scheduleScan();
       }).catch(() => {});
     };
     browser.storage.onChanged.addListener((changes, area) => {
-      if (area === 'local' && Object.keys(AUTO_BLOCK_DEFAULTS).some(key => key in changes)) {
-        refreshAutoBlockSettings();
+      if (area === 'local' && Object.keys(SETTING_DEFAULTS).some(key => key in changes)) {
+        refreshSettings();
       }
     });
-    refreshAutoBlockSettings();
+    refreshSettings();
     document.addEventListener('visibilitychange', scheduleScan);
   }
 
