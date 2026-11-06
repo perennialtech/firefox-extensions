@@ -65,12 +65,22 @@ test('signed-in Firefox renders a location chip on the live X profile',
       // query strings, cookies, or screenshots from an authenticated browser.
       const state = await driver.executeScript(`
         const text = document.body?.innerText || '';
+        const navigation = performance.getEntriesByType('navigation').at(-1);
+        const resources = performance.getEntriesByType('resource');
+        const scripts = resources.filter(entry => entry.initiatorType === 'script');
         return {
           host: location.hostname,
           route: location.pathname === '/github' ? 'profile' :
             location.pathname.startsWith('/i/flow/login') ? 'login' :
             location.pathname.startsWith('/account/access') ? 'account-access' : 'other',
           readyState: document.readyState,
+          navigationStatus: navigation?.responseStatus ?? null,
+          bodyElements: document.body?.getElementsByTagName('*').length ?? 0,
+          bodyTextLength: text.length,
+          scriptElements: document.scripts.length,
+          resourceCount: resources.length,
+          scriptResources: scripts.length,
+          scriptHttpFailures: scripts.filter(entry => entry.responseStatus >= 400).length,
           mainColumn: !!document.querySelector('[data-testid="primaryColumn"]'),
           profileHeader: !!document.querySelector('[data-testid="UserName"]'),
           loginForm: !!document.querySelector('input[autocomplete="username"]'),
