@@ -10,16 +10,39 @@ test('signed-in Firefox renders a location chip on the live X profile',
     assert.ok(authToken && ct0, 'X_AUTH_TOKEN and X_CT0 are required');
 
     const driver = await new Builder().forBrowser('firefox')
-      .setFirefoxOptions(new firefox.Options().addArguments('-headless')).build();
+      .setFirefoxOptions(new firefox.Options().addArguments('-headless'))
+      .setFirefoxService(new firefox.ServiceBuilder().addArguments('--allow-system-access'))
+      .build();
     t.after(() => driver.quit());
     await driver.manage().window().setRect({ width: 1280, height: 900 });
 
     // A temporary installation exercises the real content script and
     // background requests without depending on Mozilla add-on signing.
-    await driver.installWebExtension(__dirname, { permanent: false });
+    const extension = await driver.installWebExtension(__dirname, { permanent: false });
 
-    // Use a non-South-Asian profile to avoid the extension's optional
-    // automatic blocking changing the test account's block list.
+    // Configure the installed add-on before opening X so the test cannot
+    // change the account's block list through suggested profiles.
+    await driver.setContext(firefox.Context.CHROME);
+    let extensionUuids;
+    try {
+      extensionUuids = JSON.parse(await driver.executeScript(
+        'return Services.prefs.getStringPref("extensions.webextensions.uuids")'));
+    } finally {
+      await driver.setContext(firefox.Context.CONTENT);
+    }
+    const uuid = extensionUuids[extension.id];
+    assert.ok(uuid, 'Firefox did not assign an extension origin');
+    await driver.get(`moz-extension://${uuid}/options.html`);
+    const blockingDisabled = await driver.executeAsyncScript(`
+      const done = arguments[arguments.length - 1];
+      browser.storage.local.set({ autoBlockSouthAsia: false, autoBlockUncertain: false })
+        .then(() => browser.storage.local.get(['autoBlockSouthAsia', 'autoBlockUncertain']))
+        .then(settings => done(settings.autoBlockSouthAsia === false &&
+          settings.autoBlockUncertain === false))
+        .catch(() => done(false));
+    `);
+    assert.equal(blockingDisabled, true, 'automatic blocking must be disabled for CI');
+
     await driver.get('https://x.com/github');
     for (const [name, value] of [['auth_token', authToken], ['ct0', ct0]]) {
       await driver.manage().addCookie({ name, value, path: '/', secure: true });

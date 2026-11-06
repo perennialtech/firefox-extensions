@@ -21,8 +21,9 @@ CI runs this browser regression on both Linux and Windows and lints both
 packaged extensions with `web-ext`.
 
 The authenticated X integration test loads the actual extension in Firefox,
-uses a dedicated test account, and checks a location chip against live X and
-FxTwitter. Run it with `npm run test:live` after installing Firefox
+uses a dedicated test account, disables automatic blocking, and checks a
+location chip against live X and FxTwitter. Run it with `npm run test:live`
+after installing Firefox
 and supplying `X_AUTH_TOKEN` and `X_CT0` in the environment. Selenium
 Manager supplies geckodriver.
 GitHub Actions stores these as repository secrets and runs this test only on
