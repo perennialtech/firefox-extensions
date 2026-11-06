@@ -41,3 +41,21 @@ jobs:
       - if: runner.os == 'Windows'
         run: npx playwright install firefox
       - run: npm run test:firefox
+  live-x:
+    name: Authenticated X extension (Firefox)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: browser-actions/setup-firefox@v1
+      - run: npm ci
+      - name: Test signed-in X
+        run: npm run test:live
+        env:
+          X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
+          X_CT0: ${{ secrets.X_CT0 }}
