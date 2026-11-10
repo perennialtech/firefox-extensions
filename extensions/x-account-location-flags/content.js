@@ -196,7 +196,7 @@
   // "East Asia App Store" and "Web". Keep only the place, or the whole
   // source when it names no place.
   function sourcePlace(source) {
-    return source.replace(/\s+(?:App Store|Android App)$/i, '');
+    return source.replace(/\s+(?:App Store|Android App|Google Play(?: Store)?)$/i, '');
   }
 
   function isSouthAsianLocation(location) {
@@ -517,7 +517,6 @@
       if (!viewerId || viewerId === userId) return;
       key = viewerId + ':' + userId;
       if (blockChecks.get(key) > Date.now()) return;
-      blockChecks.set(key, Date.now() + LOCATION_TTL);
       const users = getXUsersModule();
       const state = store.getState();
       if (users?.selectViewerUser(state)?.id_str !== viewerId || users.select(state, userId)?.blocking) return;
@@ -526,6 +525,7 @@
         scheduleScan();
         return;
       }
+      blockChecks.set(key, Date.now() + LOCATION_TTL);
       // The handle lookup can be cached for days. Confirm the displayed
       // account's current location by immutable ID before blocking.
       const result = await browser.runtime.sendMessage({ type: 'lookup-id', userId }).catch(() => null);

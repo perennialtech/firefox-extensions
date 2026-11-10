@@ -468,6 +468,28 @@ test('enabled auto-block includes uncertain locations and verifies the exact X i
   assert.deepEqual(f.calls.filter(call => call.type === 'lookup-id').map(call => call.userId).sort(), ['2', '3']);
 });
 
+test('auto-block retries when X viewer state becomes available after the first scan', async () => {
+  const profiles = {
+    alice: { screen_name: 'Alice', id_str: '2' }
+  };
+  const f = contentFixture({
+    accounts: [{ handle: 'Alice', name: 'Alice', type: 'User-Name' }],
+    locations: { alice: 'India' },
+    autoBlock: {
+      settings: { autoBlockSouthAsia: true },
+      profiles,
+      idLookup: () => ({ success: true, country: 'India' })
+    }
+  });
+  await waitFor(() => f.badge(0));
+  assert.equal(f.calls.some(call => call.type === 'lookup-id'), false);
+
+  profiles.viewer = { screen_name: 'Viewer', id_str: '1' };
+  f.listeners.get('scroll')();
+  await waitFor(() => f.blocks.length === 1);
+  assert.deepEqual(f.blocks, ['2']);
+});
+
 test('automatic blocking and amber highlighting are off without saved settings', async () => {
   const f = contentFixture({
     accounts: [{ handle: 'Alice', name: 'Alice' }, { handle: 'Bob', name: 'Bob' }],
@@ -927,7 +949,9 @@ test('chips show connection sources and reflect both accuracy fields with South 
     [{ country: 'Japan', accurate: true },
       '🇯🇵 JPN', '#f5f5f5'],
     [{ country: 'India', accurate: false, source: 'Web' },
-      '🇮🇳 IND via Web', '#fca5a5']
+      '🇮🇳 IND via Web', '#fca5a5'],
+    [{ country: 'Japan', accurate: true, createdCountryAccurate: true, source: 'India Google Play Store' },
+      '🇯🇵 JPN via IND', '#f5f5f5']
   ];
   const f = contentFixture({
     accounts: cases.map((_, i) => ({ handle: 'Source' + i, name: 'Source ' + i })),
