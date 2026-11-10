@@ -4,10 +4,11 @@ A Firefox extension that shows X's **Account based in** metadata before account
 names in posts, replies and user lists (including quoted posts). Countries and
 territories appear with a flag, when supported by the system, and an ISO 3166-1
 alpha-3 code (such as 🇯🇵 JPN); geographic regions use short labels (such as
-SE Asia or LATAM). When X reports a connection source, the chip adds it
-after `via`, for example `JPN via USA` or `JPN via Web`. Southern Asia and
-its countries use pale red chips. Other chips are amber if X omits or marks
-either the location or the account creation country as uncertain.
+SE Asia or LATAM). When X reports a connection source that differs from the
+location, the chip adds it after `via`, for example `JPN via USA` or
+`JPN via Web`. Southern Asia and its countries use pale red chips. Other
+chips can optionally be highlighted in amber when X has not confirmed the
+location or the account creation country. This highlight is off by default.
 
 Locations come from [FxTwitter](https://docs.fxembed.com/api/twitter/operations/2profilehandleabout/)
 and **do not establish where a person actually lives or is currently located**.
@@ -22,11 +23,13 @@ You need Firefox 140 or newer.
 2. Open `about:addons` in Firefox, select the gear menu, and choose **Install Add-on From File**.
 3. Select the downloaded `.xpi`, then open or refresh [X](https://x.com/).
 
-While you are signed in to X, the extension checks the location of visible
-accounts by their X account ID and automatically blocks South Asia matches.
-This includes accounts with missing or uncertain accuracy data. In `about:addons`, open the
-extension's preferences to turn off automatic blocking or exclude uncertain
-accounts. To unblock an account, use X's blocked accounts settings.
+Automatic blocking is off by default. In `about:addons`, open the extension's
+preferences to enable blocking visible accounts based in South Asia. When
+enabled, the extension also blocks accounts whose location X has not confirmed
+if either their location or their connection source is in South Asia. Before
+blocking, it checks the account's current location by its X account ID. You
+can exclude unconfirmed accounts in the preferences. To unblock an account,
+use X's blocked accounts settings.
 
 The signed extension stays installed after Firefox restarts. Starting with
 version 0.2.0, Firefox can update it automatically from GitHub Releases using
@@ -54,7 +57,8 @@ Temporary extensions are removed when Firefox restarts.
 ## Privacy and limitations
 
 Location lookups send public handles to FxTwitter. When automatic blocking
-is enabled, the extension also looks up public numeric X account IDs.
+is enabled, the extension also looks up the public numeric X account IDs of
+accounts it is about to block.
 Both lookups include normal request metadata such as your IP address.
 The extension does not send X cookies, credentials or authorization
 headers to FxTwitter, and does not require an X login of its own.
