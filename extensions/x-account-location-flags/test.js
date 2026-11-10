@@ -558,7 +558,8 @@ test('auto-block only checks accounts the handle lookup already selects', async 
     viaindia: { country: 'Japan', createdCountryAccurate: true, source: 'India App Store' },
     confirmedviaindia: { country: 'Japan', accurate: true, createdCountryAccurate: true, source: 'India App Store' },
     uncertainjapan: { country: 'Japan', createdCountryAccurate: true, source: 'Japan App Store' },
-    viasouthasia: { country: 'East Asia', createdCountryAccurate: true, source: 'South Asia App Store' }
+    viasouthasia: { country: 'East Asia', createdCountryAccurate: true, source: 'South Asia App Store' },
+    createdonly: { country: 'Japan', accurate: true, createdCountryAccurate: false, source: 'India App Store' }
   };
   const handles = ['Viewer', ...Object.keys(cases)];
   const f = contentFixture({

@@ -490,7 +490,7 @@
     const uncertain = !isConfirmed(entry);
     if (uncertain && !settings.autoBlockUncertain) return false;
     return Boolean(entry.country && isSouthAsianLocation(entry.country)) ||
-      Boolean(uncertain && entry.source && isSouthAsianLocation(sourcePlace(entry.source)));
+      Boolean(entry.accurate !== true && entry.source && isSouthAsianLocation(sourcePlace(entry.source)));
   }
 
   function currentBlockTarget(store, users, viewerId, userId) {
