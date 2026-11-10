@@ -26,8 +26,6 @@ location chip against live X and FxTwitter. Run it with `npm run test:live`
 after installing Firefox
 and supplying `X_AUTH_TOKEN` and `X_CT0` in the environment. Selenium
 Manager supplies geckodriver.
-GitHub Actions stores these as repository secrets and runs this test only on
-pushes to `main`, not on pull requests where test code may be untrusted.
 
 ## Release
 
