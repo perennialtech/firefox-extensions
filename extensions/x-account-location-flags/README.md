@@ -1,4 +1,4 @@
-# X Account Location Flags for Firefox
+# x-account-location-flags for Firefox
 
 A Firefox extension that shows X's **Account based in** metadata before account
 names in posts, replies and user lists (including quoted posts). Countries and

@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "X Account Location Flags",
+  "name": "x-account-location-flags",
   "version": "0.6.0",
   "description": "Show X account countries and regions using FxTwitter public metadata.",
   "browser_specific_settings": {
