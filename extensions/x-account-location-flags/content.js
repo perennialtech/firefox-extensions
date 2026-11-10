@@ -552,7 +552,7 @@
       }
     } catch (_) {
       if (key) retryBlockCheck(key);
-      console.warn('[X Account Location Flags] Could not automatically block @' + username);
+      console.warn('[x-account-location-flags] Could not automatically block @' + username);
     }
   }
 

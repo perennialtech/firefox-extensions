@@ -35,8 +35,8 @@ versions and release tags:
 
 | Extension | Manifest | Tag for version `1.2.3` |
 | --- | --- | --- |
-| X Account Location Flags | `extensions/x-account-location-flags/manifest.json` | `v1.2.3` |
-| Reddit Direct Images | `extensions/reddit-direct-images/manifest.json` | `reddit-v1.2.3` |
+| x-account-location-flags | `extensions/x-account-location-flags/manifest.json` | `v1.2.3` |
+| reddit-direct-images | `extensions/reddit-direct-images/manifest.json` | `reddit-v1.2.3` |
 
 Update the relevant manifest version, commit, and push the matching tag to
 trigger `.github/workflows/release.yml`. The release workflow tests both

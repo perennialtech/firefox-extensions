@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Reddit Direct Images",
+  "name": "reddit-direct-images",
   "version": "0.1.0",
   "description": "Open Reddit-hosted images as images, not Reddit media pages.",
   "permissions": [
