@@ -271,6 +271,10 @@ function contentFixture(options = {}) {
     const display = element({
       attrs: acct.quoted ? { dir: 'ltr' } : { href: '/' + acct.handle, role: 'link' },
       textContent: acct.name,
+      querySelectorAll(selector) {
+        return selector === 'img[alt]' && acct.nameEmojiAlt
+          ? [{ getAttribute: () => acct.nameEmojiAlt }] : [];
+      },
       getBoundingClientRect: () => bounds(acct)
     });
     const handle = element({
@@ -515,10 +519,60 @@ test('automatic blocking and amber highlighting are off without saved settings',
   assert.equal(f.badge(1).style.backgroundColor, '#f5f5f5');
 });
 
+test('one opt-in blocks either display-name symbol without location lookups', async () => {
+  const accounts = [
+    { handle: 'Viewer', name: 'Viewer' },
+    { handle: 'FlagText', name: 'Hello 🏳️‍⚧️' },
+    { handle: 'SymbolText', name: '⚧️ Hello' },
+    { handle: 'FlagImage', name: 'Flag', nameEmojiAlt: '🏳️‍⚧️' },
+    { handle: 'SymbolImage', name: 'Symbol', nameEmojiAlt: '⚧️' },
+    { handle: 'Plain', name: 'Hello' },
+    { handle: 'Hidden', name: '⚧️', offscreen: true }
+  ].map(account => ({ type: 'User-Name', ...account }));
+  const f = contentFixture({
+    accounts,
+    locations: Object.fromEntries(accounts.map(account => [account.handle.toLowerCase(), 'Japan'])),
+    autoBlock: {
+      settings: { autoBlockNameSymbols: true },
+      profiles: Object.fromEntries(accounts.map((account, i) => [account.handle.toLowerCase(), {
+        screen_name: account.handle, id_str: String(i + 1)
+      }])),
+      idLookup: () => { throw new Error('name-only blocking must not fetch location IDs'); }
+    }
+  });
+  await waitFor(() => f.blocks.length === 4);
+  assert.deepEqual(f.blocks.sort(), ['2', '3', '4', '5']);
+  assert.equal(f.calls.some(call => call.type === 'lookup-id'), false);
+});
+
+test('a prior location check does not delay a newly matching display name', async () => {
+  const f = contentFixture({
+    accounts: [{ handle: 'Alice', name: 'Alice', type: 'User-Name' }],
+    locations: { alice: 'India' },
+    autoBlock: {
+      settings: { autoBlockSouthAsia: true, autoBlockNameSymbols: true },
+      profiles: {
+        viewer: { id_str: '1', screen_name: 'Viewer' },
+        alice: { id_str: '2', screen_name: 'Alice' }
+      },
+      idLookup: () => ({ success: true, country: 'Japan', accurate: true,
+        createdCountryAccurate: true })
+    }
+  });
+  await waitFor(() => f.calls.some(call => call.type === 'lookup-id'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.blocks, []);
+  f.links[0].textContent = 'Alice ⚧️';
+  f.listeners.get('scroll')();
+  await waitFor(() => f.blocks.length === 1);
+  assert.deepEqual(f.blocks, ['2']);
+});
+
 test('options default to blocking and highlight off and retain opt-in choices', async () => {
   const saved = {};
   function optionsFixture() {
-    const inputs = Object.fromEntries(['highlightUncertain', 'autoBlockSouthAsia', 'autoBlockUncertain']
+    const inputs = Object.fromEntries(['highlightUncertain', 'autoBlockSouthAsia',
+      'autoBlockNameSymbols', 'autoBlockUncertain']
       .map(id => [id, { id, checked: false, disabled: true, addEventListener(_, callback) {
         this.onChange = callback;
       } }]));
@@ -536,6 +590,8 @@ test('options default to blocking and highlight off and retain opt-in choices', 
   await waitFor(() => !inputs.highlightUncertain.disabled);
   assert.equal(inputs.highlightUncertain.checked, false);
   assert.equal(inputs.autoBlockSouthAsia.checked, false);
+  assert.equal(inputs.autoBlockNameSymbols.checked, false);
+  assert.equal(inputs.autoBlockNameSymbols.disabled, false);
   assert.equal(inputs.autoBlockUncertain.checked, true);
   assert.equal(inputs.autoBlockUncertain.disabled, true);
 
@@ -543,12 +599,17 @@ test('options default to blocking and highlight off and retain opt-in choices', 
   await inputs.autoBlockSouthAsia.onChange();
   inputs.highlightUncertain.checked = true;
   await inputs.highlightUncertain.onChange();
-  assert.deepEqual(saved, { autoBlockSouthAsia: true, highlightUncertain: true });
+  inputs.autoBlockNameSymbols.checked = true;
+  await inputs.autoBlockNameSymbols.onChange();
+  assert.deepEqual(saved, {
+    autoBlockSouthAsia: true, highlightUncertain: true, autoBlockNameSymbols: true
+  });
 
   const reloaded = optionsFixture();
   await waitFor(() => !reloaded.highlightUncertain.disabled);
   assert.equal(reloaded.autoBlockSouthAsia.checked, true);
   assert.equal(reloaded.highlightUncertain.checked, true);
+  assert.equal(reloaded.autoBlockNameSymbols.checked, true);
   assert.equal(reloaded.autoBlockUncertain.disabled, false);
 });
 
