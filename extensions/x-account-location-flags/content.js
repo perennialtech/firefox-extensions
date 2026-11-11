@@ -170,7 +170,8 @@
   let usersModule;
   const blockChecks = new Map();
   const SETTING_DEFAULTS = {
-    autoBlockSouthAsia: false, autoBlockUncertain: true, highlightUncertain: false
+    autoBlockSouthAsia: false, autoBlockUncertain: true, autoBlockNameSymbols: false,
+    highlightUncertain: false
   };
   // Null until loaded from storage; an auto-block decision needs the user's
   // actual settings, never the defaults.
@@ -223,6 +224,14 @@
   function hasDisplayName(node) {
     const text = node.textContent.trim();
     return Boolean(text) || hasEmojiNameImage(node);
+  }
+
+  function hasBlockNameSymbol(link) {
+    const name = link.querySelector?.('div[dir="ltr"]') || link;
+    // ⚧ is also the final code point in the transgender flag emoji.
+    return /⚧/u.test(name.textContent || '') ||
+      [...(name.querySelectorAll?.('img[alt]') || [])]
+        .some(img => /⚧/u.test(img.getAttribute('alt') || ''));
   }
 
   function isNameCandidate(node) {
@@ -494,7 +503,8 @@
   }
 
   function currentBlockTarget(store, users, viewerId, userId) {
-    if (!settings?.autoBlockSouthAsia || sessionViewerId() !== viewerId) return null;
+    if (!(settings?.autoBlockSouthAsia || settings?.autoBlockNameSymbols) ||
+        sessionViewerId() !== viewerId) return null;
     const current = store.getState();
     if (users.selectViewerUser(current)?.id_str !== viewerId ||
         users.select(current, userId)?.blocking) return null;
@@ -510,22 +520,33 @@
     setTimeout(scheduleScan, LOOKUP_FAILURE_TTL);
   }
 
-  async function checkAutoBlock(username, { store, userId }) {
+  async function checkAutoBlock(username, { store, userId }, rule) {
     let key;
     try {
       const viewerId = sessionViewerId();
       if (!viewerId || viewerId === userId) return;
-      key = viewerId + ':' + userId;
+      key = viewerId + ':' + userId + ':' + rule;
       if (blockChecks.get(key) > Date.now()) return;
       const users = getXUsersModule();
       const state = store.getState();
       if (users?.selectViewerUser(state)?.id_str !== viewerId || users.select(state, userId)?.blocking) return;
-      if (!currentBlockTarget(store, users, viewerId, userId)) {
+      const target = currentBlockTarget(store, users, viewerId, userId);
+      if (!target) {
         blockChecks.delete(key);
         scheduleScan();
         return;
       }
       blockChecks.set(key, Date.now() + LOCATION_TTL);
+      if (rule === 'name') {
+        if (!settings.autoBlockNameSymbols || !hasBlockNameSymbol(target.link)) {
+          blockChecks.delete(key);
+          return;
+        }
+        await store.dispatch(users.block(userId));
+        if (users.select(store.getState(), userId)?.blocking !== true) retryBlockCheck(key);
+        return;
+      }
+      if (!settings.autoBlockSouthAsia) return;
       // The handle lookup can be cached for days. Confirm the displayed
       // account's current location by immutable ID before blocking.
       const result = await browser.runtime.sendMessage({ type: 'lookup-id', userId }).catch(() => null);
@@ -538,14 +559,14 @@
         }
         return;
       }
-      const target = currentBlockTarget(store, users, viewerId, userId);
-      if (!target) {
+      const current = currentBlockTarget(store, users, viewerId, userId);
+      if (!current) {
         blockChecks.delete(key);
         scheduleScan();
         return;
       }
       idEntries.set(userId, { ...result, expires: Date.now() + LOCATION_TTL });
-      paintUsername(target.username);
+      paintUsername(current.username);
       if (qualifiesForBlock(result)) {
         await store.dispatch(users.block(userId));
         if (users.select(store.getState(), userId)?.blocking !== true) retryBlockCheck(key);
@@ -567,11 +588,15 @@
       child.dataset?.xAccountFlag === 'true');
     let badge = existing.find(child => child.dataset.xAccountHandle === username);
     for (const old of existing) if (old !== badge) old.remove();
-    const candidate = qualifiesForBlock(entry);
+    const nameCandidate = settings?.autoBlockNameSymbols && hasBlockNameSymbol(link);
+    const locationCandidate = qualifiesForBlock(entry);
+    const candidate = nameCandidate || locationCandidate;
     if (placement === 'header' && (candidate || idEntries.size)) {
       const account = renderedAccount(link, username);
       if (account) {
-        if (candidate && visibleForBlock(link)) void checkAutoBlock(username, account);
+        if (candidate && visibleForBlock(link)) {
+          void checkAutoBlock(username, account, nameCandidate ? 'name' : 'location');
+        }
         const byId = idEntries.get(account.userId);
         if (byId?.expires > Date.now()) entry = byId;
       }

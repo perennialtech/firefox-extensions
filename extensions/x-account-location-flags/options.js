@@ -2,11 +2,13 @@
 
 const highlight = document.getElementById('highlightUncertain');
 const autoBlock = document.getElementById('autoBlockSouthAsia');
+const nameSymbols = document.getElementById('autoBlockNameSymbols');
 const uncertain = document.getElementById('autoBlockUncertain');
-const inputs = [highlight, autoBlock, uncertain];
+const inputs = [highlight, autoBlock, nameSymbols, uncertain];
 const status = document.getElementById('status');
 const defaults = {
-  highlightUncertain: false, autoBlockSouthAsia: false, autoBlockUncertain: true
+  highlightUncertain: false, autoBlockSouthAsia: false, autoBlockNameSymbols: false,
+  autoBlockUncertain: true
 };
 
 async function load() {

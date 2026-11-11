@@ -31,6 +31,9 @@ blocking, it checks the account's current location by its X account ID. You
 can exclude unconfirmed accounts in the preferences. To unblock an account,
 use X's blocked accounts settings.
 
+You can separately enable blocking accounts whose display names contain
+🏳️‍⚧️ or ⚧️. This rule is off by default and does not depend on location data.
+
 The signed extension stays installed after Firefox restarts. Starting with
 version 0.2.0, Firefox can update it automatically from GitHub Releases using
 the [update manifest](https://perennialtech.github.io/firefox-extensions/updates.json).
