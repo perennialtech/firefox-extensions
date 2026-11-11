@@ -552,6 +552,11 @@ test('options default to blocking and highlight off and retain opt-in choices', 
   assert.equal(reloaded.autoBlockUncertain.disabled, false);
 });
 
+test('uncertain location option names the South Asian scope', () => {
+  const html = fs.readFileSync(__dirname + '/options.html', 'utf8');
+  assert.match(html, /id="autoBlockUncertain"[^>]*> Include accounts reported in South Asia with unconfirmed location or creation-country data, or connecting from South Asia with an unconfirmed location<\/label>/);
+});
+
 test('auto-block only checks accounts the handle lookup already selects', async () => {
   const cases = {
     japan: { country: 'Japan', accurate: true, createdCountryAccurate: true, source: 'United States App Store' },
