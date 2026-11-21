@@ -393,22 +393,17 @@
       seen.add(name);
       found.push({ link: name, username, placement: 'header' });
     }
-    // The main header of a public profile is different again: its display
-    // name is an h1 and the matching @handle is plain text, with no profile
-    // links. Scope this to the visited profile route so unrelated headings
-    // and account references elsewhere on the page cannot acquire chips.
+    // In the public profile header, the h1's wrapper is followed by the
+    // plain-text @handle span. A timeline heading can also share an ancestor
+    // with a matching handle in the first post.
     const profile = /^\/([a-zA-Z0-9_]{1,15})(?:\/(?:with_replies|media|likes|highlights|articles))?\/?$/
       .exec(location.pathname);
     if (profile) {
       const username = profile[1].toLowerCase();
       for (const name of root.querySelectorAll('h1')) {
         if (name.closest(USER_SELECTOR) || seen.has(name) || !hasDisplayName(name)) continue;
-        const header = name.parentElement?.parentElement;
-        if (!header) continue;
-        const hasHandle = [...header.querySelectorAll('span')].some(node =>
-          node.childElementCount === 0 &&
-          node.textContent.trim().toLowerCase() === '@' + username);
-        if (!hasHandle) continue;
+        const handle = name.parentElement?.nextElementSibling;
+        if (!handle?.matches('span') || handle.textContent.trim().toLowerCase() !== '@' + username) continue;
         seen.add(name);
         found.push({ link: name, username, placement: 'header' });
       }
