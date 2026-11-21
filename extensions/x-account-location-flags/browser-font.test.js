@@ -648,6 +648,46 @@ test('Firefox annotates the plain-text main header of a public X profile',
       ['_voltcrash', 'alice']);
   });
 
+test('Firefox keeps location chips off profile timeline headings',
+  { timeout: 30_000 }, async t => {
+    const browser = await firefox.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.route('https://x.com/Alice', route => route.fulfill({
+      contentType: 'text/html',
+      body: `
+        <div data-testid="primaryColumn">
+          <div data-testid="UserName">
+            <div id="profile-name"><div dir="ltr">Alice</div></div>
+            <div tabindex="-1"><div dir="ltr">@Alice</div></div>
+          </div>
+          <section role="region" aria-labelledby="accessible-list-1">
+            <h1 id="accessible-list-1" role="heading" aria-level="1">Alice’s posts</h1>
+            <div aria-label="Timeline: Alice’s posts">
+              <article data-testid="tweet">
+                <div data-testid="User-Name">
+                  <div id="post-name"><a href="/Alice">Alice</a></div>
+                  <a tabindex="-1" href="/Alice"><span>@Alice</span></a>
+                </div>
+              </article>
+            </div>
+          </section>
+        </div>
+      `
+    }));
+    await page.goto('https://x.com/Alice');
+    await page.evaluate(() => {
+      window.browser = { runtime: { sendMessage: async () => ({
+        success: true, country: 'United States', source: 'Web',
+        accurate: true, createdCountryAccurate: true
+      }) } };
+    });
+    await page.addScriptTag({ path: path.join(__dirname, 'content.js') });
+    await page.locator('#profile-name > [data-x-account-flag]').waitFor();
+    await page.locator('#post-name > [data-x-account-flag]').waitFor();
+    assert.equal(await page.locator('section[role="region"] > [data-x-account-flag]').count(), 0);
+  });
+
 test('Firefox prefers the account name over avatar and unrelated image links',
   { timeout: 30_000 }, async t => {
     const browser = await firefox.launch();
